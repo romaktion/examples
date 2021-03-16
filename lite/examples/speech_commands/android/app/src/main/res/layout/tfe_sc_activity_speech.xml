@@ -19,7 +19,7 @@
     android:layout_height="match_parent"
     android:background="#00000000">
 
-    <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    <RelativeLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent">
 
@@ -73,7 +73,7 @@
                     android:layout_weight=".5"
                     android:background="@drawable/round_corner_text_bg_unselected"
                     android:gravity="center"
-                    android:text="Yes" />
+                    android:text="Пиши" />
 
                 <TextView
                     android:id="@+id/no"
@@ -83,7 +83,7 @@
                     android:layout_weight=".5"
                     android:background="@drawable/round_corner_text_bg_unselected"
                     android:gravity="center"
-                    android:text="No" />
+                    android:text="Пишу" />
 
             </LinearLayout>
 
@@ -102,7 +102,8 @@
                     android:layout_weight=".5"
                     android:background="@drawable/round_corner_text_bg_unselected"
                     android:gravity="center"
-                    android:text="Up" />
+                    android:text="Up"
+                    android:visibility="gone" />
 
                 <TextView
                     android:id="@+id/down"
@@ -112,7 +113,8 @@
                     android:layout_weight=".5"
                     android:background="@drawable/round_corner_text_bg_unselected"
                     android:gravity="center"
-                    android:text="Down" />
+                    android:text="Down"
+                    android:visibility="gone" />
 
             </LinearLayout>
 
@@ -131,7 +133,8 @@
                     android:layout_weight=".5"
                     android:background="@drawable/round_corner_text_bg_unselected"
                     android:gravity="center"
-                    android:text="Left" />
+                    android:text="Left"
+                    android:visibility="gone" />
 
                 <TextView
                     android:id="@+id/right"
@@ -141,7 +144,8 @@
                     android:layout_weight=".5"
                     android:background="@drawable/round_corner_text_bg_unselected"
                     android:gravity="center"
-                    android:text="Right" />
+                    android:text="Right"
+                    android:visibility="gone" />
 
             </LinearLayout>
 
@@ -160,7 +164,8 @@
                     android:layout_weight=".5"
                     android:background="@drawable/round_corner_text_bg_unselected"
                     android:gravity="center"
-                    android:text="On" />
+                    android:text="On"
+                    android:visibility="gone" />
 
                 <TextView
                     android:id="@+id/off"
@@ -170,7 +175,8 @@
                     android:layout_weight=".5"
                     android:background="@drawable/round_corner_text_bg_unselected"
                     android:gravity="center"
-                    android:text="Off" />
+                    android:text="Off"
+                    android:visibility="gone" />
 
             </LinearLayout>
 
@@ -189,7 +195,8 @@
                     android:layout_weight=".5"
                     android:background="@drawable/round_corner_text_bg_unselected"
                     android:gravity="center"
-                    android:text="Stop" />
+                    android:text="Stop"
+                    android:visibility="gone" />
 
                 <TextView
                     android:id="@+id/go"
@@ -199,7 +206,8 @@
                     android:layout_weight=".5"
                     android:background="@drawable/round_corner_text_bg_unselected"
                     android:gravity="center"
-                    android:text="Go" />
+                    android:text="Go"
+                    android:visibility="gone" />
 
             </LinearLayout>
 

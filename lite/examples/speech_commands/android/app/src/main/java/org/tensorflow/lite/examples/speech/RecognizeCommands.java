@@ -139,7 +139,7 @@ public class RecognizeCommands {
     final long earliestTime = previousResults.getFirst().first;
     final long samplesDuration = currentTimeMS - earliestTime;
 
-    Log.v("Number of Results: ", String.valueOf(howManyResults));
+    /*Log.v("Number of Results: ", String.valueOf(howManyResults));
 
     Log.v(
         "Duration < WD/FRAC?",
@@ -150,7 +150,7 @@ public class RecognizeCommands {
     ) {
       Log.v("RecognizeResult", "Too few results");
       return new RecognitionResult(previousTopLabel, 0.0f, false);
-    }
+    }*/
 
     // Calculate the average score across all the results in the window.
     float[] averageScores = new float[labelsCount];

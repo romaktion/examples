@@ -82,7 +82,7 @@ public class SpeechActivity extends Activity
   private static final int RECORDING_LENGTH = (int) (SAMPLE_RATE * SAMPLE_DURATION_MS / 1000);
   private static final long AVERAGE_WINDOW_DURATION_MS = 1000;
   private static final float DETECTION_THRESHOLD = 0.50f;
-  private static final int SUPPRESSION_MS = 1500;
+  private static final int SUPPRESSION_MS = 1010;
   private static final int MINIMUM_COUNT = 3;
   private static final long MINIMUM_TIME_BETWEEN_SAMPLES_MS = 30;
   private static final String LABEL_FILENAME = "file:///android_asset/conv_actions_labels.txt";
@@ -116,16 +116,7 @@ public class SpeechActivity extends Activity
   private Interpreter tfLite;
   private ImageView bottomSheetArrowImageView;
 
-  private TextView yesTextView,
-      noTextView,
-      upTextView,
-      downTextView,
-      leftTextView,
-      rightTextView,
-      onTextView,
-      offTextView,
-      stopTextView,
-      goTextView;
+  private TextView writeTextView, writingTextView;
   private TextView sampleRateTextView, inferenceTimeTextView;
   private ImageView plusImageView, minusImageView;
   private SwitchCompat apiSwitchCompat;
@@ -207,16 +198,8 @@ public class SpeechActivity extends Activity
     minusImageView = findViewById(R.id.minus);
     apiSwitchCompat = findViewById(R.id.api_info_switch);
 
-    yesTextView = findViewById(R.id.yes);
-    noTextView = findViewById(R.id.no);
-    upTextView = findViewById(R.id.up);
-    downTextView = findViewById(R.id.down);
-    leftTextView = findViewById(R.id.left);
-    rightTextView = findViewById(R.id.right);
-    onTextView = findViewById(R.id.on);
-    offTextView = findViewById(R.id.off);
-    stopTextView = findViewById(R.id.stop);
-    goTextView = findViewById(R.id.go);
+    writeTextView = findViewById(R.id.yes);
+    writingTextView = findViewById(R.id.no);
 
     apiSwitchCompat.setOnCheckedChangeListener(this);
 
@@ -454,34 +437,10 @@ public class SpeechActivity extends Activity
 
                 switch (labelIndex - 2) {
                   case 0:
-                    selectedTextView = yesTextView;
+                    selectedTextView = writeTextView;
                     break;
                   case 1:
-                    selectedTextView = noTextView;
-                    break;
-                  case 2:
-                    selectedTextView = upTextView;
-                    break;
-                  case 3:
-                    selectedTextView = downTextView;
-                    break;
-                  case 4:
-                    selectedTextView = leftTextView;
-                    break;
-                  case 5:
-                    selectedTextView = rightTextView;
-                    break;
-                  case 6:
-                    selectedTextView = onTextView;
-                    break;
-                  case 7:
-                    selectedTextView = offTextView;
-                    break;
-                  case 8:
-                    selectedTextView = stopTextView;
-                    break;
-                  case 9:
-                    selectedTextView = goTextView;
+                    selectedTextView = writingTextView;
                     break;
                 }
 

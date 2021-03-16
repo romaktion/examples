@@ -1,5 +1,5 @@
 # TensorFlow Lite model
-*.tflite
+# *.tflite
 
 # Swift
 
