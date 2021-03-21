@@ -81,7 +81,7 @@ public class SpeechActivity extends Activity
   private static final int SAMPLE_DURATION_MS = 777;
   private static final int RECORDING_LENGTH = (int) (SAMPLE_RATE * SAMPLE_DURATION_MS / 1000);
   private static final long AVERAGE_WINDOW_DURATION_MS = 777;
-  private static final float DETECTION_THRESHOLD = 0.44f;
+  private static final float DETECTION_THRESHOLD = 0.5f;
   private static final int SUPPRESSION_MS = 777;
   private static final int MINIMUM_COUNT = 3;
   private static final long MINIMUM_TIME_BETWEEN_SAMPLES_MS = 0;
