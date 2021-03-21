@@ -78,13 +78,13 @@ public class SpeechActivity extends Activity
   // all these, but you should customize them to match your training settings if
   // you are running your own model.
   private static final int SAMPLE_RATE = 16000;
-  private static final int SAMPLE_DURATION_MS = 1000;
+  private static final int SAMPLE_DURATION_MS = 777;
   private static final int RECORDING_LENGTH = (int) (SAMPLE_RATE * SAMPLE_DURATION_MS / 1000);
-  private static final long AVERAGE_WINDOW_DURATION_MS = 1000;
-  private static final float DETECTION_THRESHOLD = 0.50f;
-  private static final int SUPPRESSION_MS = 1010;
+  private static final long AVERAGE_WINDOW_DURATION_MS = 777;
+  private static final float DETECTION_THRESHOLD = 0.44f;
+  private static final int SUPPRESSION_MS = 777;
   private static final int MINIMUM_COUNT = 3;
-  private static final long MINIMUM_TIME_BETWEEN_SAMPLES_MS = 30;
+  private static final long MINIMUM_TIME_BETWEEN_SAMPLES_MS = 0;
   private static final String LABEL_FILENAME = "file:///android_asset/conv_actions_labels.txt";
   private static final String MODEL_FILENAME = "file:///android_asset/conv_actions_frozen.tflite";
 
@@ -198,8 +198,8 @@ public class SpeechActivity extends Activity
     minusImageView = findViewById(R.id.minus);
     apiSwitchCompat = findViewById(R.id.api_info_switch);
 
-    writeTextView = findViewById(R.id.yes);
-    writingTextView = findViewById(R.id.no);
+    writeTextView = findViewById(R.id.write);
+    writingTextView = findViewById(R.id.writing);
 
     apiSwitchCompat.setOnCheckedChangeListener(this);
 
