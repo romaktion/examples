@@ -16,6 +16,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import csv
 import os
 
 import numpy as np
@@ -43,6 +44,16 @@ def write_sample(root,
   os.makedirs(os.path.join(root, category), exist_ok=True)
   xs = value * np.ones(shape=(int(sample_rate * duration_sec),), dtype=dtype)
   wavfile.write(os.path.join(root, category, file_name), sample_rate, xs)
+
+
+def write_csv(root, folder, filename, headers, rows):
+  os.makedirs(os.path.join(root, folder), exist_ok=True)
+
+  with open(os.path.join(root, folder, filename), 'w') as f:
+    writer = csv.DictWriter(f, fieldnames=headers)
+    writer.writeheader()
+    for row in rows:
+      writer.writerow(dict(zip(headers, row)))
 
 
 class MockSpec(audio_spec.BaseSpec):
@@ -99,28 +110,39 @@ class Base(tf.test.TestCase):
 
 class LoadFromESC50Test(Base):
 
-  def test_spec(self):
+  def test_from_esc50(self):
     folder_path = self._get_folder_path('test_examples_helper')
 
+    headers = [
+        'filename', 'fold', 'target', 'category', 'esc10', 'src_file', 'take'
+    ]
+    rows = []
+    rows.append(['1-100032-A-0.wav', '1', '0', 'dog', 'True', '100032', 'A'])
+    rows.append([
+        '1-100210-B-36.wav', '2', '36', 'vacuum_cleaner', 'False', '100210', 'B'
+    ])
+    rows.append([
+        '1-100210-A-36.wav', '1', '36', 'vacuum_cleaner', 'False', '100210', 'A'
+    ])
+    write_csv(folder_path, 'meta', 'esc50.csv', headers, rows)
+
     spec = audio_spec.YAMNetSpec()
-    audio_dataloader.DataLoader.from_esc50(spec, folder_path)
+    loader = audio_dataloader.DataLoader.from_esc50(spec, folder_path)
 
-    spec = audio_spec.BrowserFFTSpec()
-    with self.assertRaises(AssertionError):
-      audio_dataloader.DataLoader.from_esc50(spec, folder_path)
+    self.assertEqual(len(loader), 3)
+    self.assertEqual(loader.index_to_label, ['dog', 'vacuum_cleaner'])
+
+    expected_results = {
+        '1-100032-A-0.wav': 0,
+        '1-100210-B-36.wav': 1,
+        '1-100210-A-36.wav': 1,
+    }
+    for full_path, label in loader._dataset:
+      filename = full_path.numpy().decode('utf-8').split('/')[-1]
+      self.assertEqual(expected_results[filename], label)
 
 
-class LoadFromFolderTest(Base):
-
-  def test_spec(self):
-    folder_path = self._get_folder_path('test_examples_helper')
-    write_sample(folder_path, 'unknown', '2s.wav', 44100, 2, value=1)
-
-    spec = audio_spec.YAMNetSpec()
-    audio_dataloader.DataLoader.from_folder(spec, folder_path)
-
-    spec = audio_spec.BrowserFFTSpec()
-    audio_dataloader.DataLoader.from_folder(spec, folder_path)
+class ExamplesHelperTest(Base):
 
   def test_examples_helper(self):
     root = self._get_folder_path('test_examples_helper')
@@ -138,18 +160,30 @@ class LoadFromFolderTest(Base):
     def fullpath(name):
       return os.path.join(root, name)
 
-    helper = audio_dataloader.ExamplesHelper(root, is_wav_files)
-    self.assertEqual(helper.sorted_cateogries, ['a', 'b'])
+    helper = audio_dataloader.ExamplesHelper.from_examples_folder(
+        root, is_wav_files)
+    self.assertEqual(helper.index_to_label, ['a', 'b'])
     self.assertEqual(
         helper.examples_and_labels(),
-        ([fullpath('a/1.wav'),
-          fullpath('a/2.wav'),
-          fullpath('b/1.wav')], ['a', 'a', 'b']))
+        ((fullpath('a/1.wav'), fullpath('a/2.wav'), fullpath('b/1.wav')),
+         ('a', 'a', 'b')))
     self.assertEqual(
         helper.examples_and_label_indices(),
-        ([fullpath('a/1.wav'),
-          fullpath('a/2.wav'),
-          fullpath('b/1.wav')], [0, 0, 1]))
+        ((fullpath('a/1.wav'), fullpath('a/2.wav'), fullpath('b/1.wav')),
+         (0, 0, 1)))
+
+
+class LoadFromFolderTest(Base):
+
+  def test_spec(self):
+    folder_path = self._get_folder_path('test_examples_helper')
+    write_sample(folder_path, 'unknown', '2s.wav', 44100, 2, value=1)
+
+    spec = audio_spec.YAMNetSpec()
+    audio_dataloader.DataLoader.from_folder(spec, folder_path)
+
+    spec = audio_spec.BrowserFFTSpec()
+    audio_dataloader.DataLoader.from_folder(spec, folder_path)
 
   def test_no_audio_files_found(self):
     folder_path = self._get_folder_path('test_no_audio_files_found')
