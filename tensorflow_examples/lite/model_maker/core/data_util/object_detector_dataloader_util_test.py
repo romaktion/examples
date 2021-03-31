@@ -12,10 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import csv
 import filecmp
 import os
@@ -24,6 +20,81 @@ import tensorflow as tf
 from tensorflow_examples.lite.model_maker.core import test_util
 from tensorflow_examples.lite.model_maker.core.data_util import object_detector_dataloader_util as dataloader_util
 import yaml
+
+
+class CacheFilesTest(tf.test.TestCase):
+
+  def test_get_cache_files(self):
+    cache_files = dataloader_util.get_cache_files(
+        cache_dir='/tmp/', cache_prefix_filename='train', num_shards=1)
+    self.assertEqual(cache_files.cache_prefix, '/tmp/train')
+    self.assertLen(cache_files.tfrecord_files, 1)
+    self.assertEqual(cache_files.tfrecord_files[0],
+                     '/tmp/train-00000-of-00001.tfrecord')
+    self.assertEqual(cache_files.meta_data_file, '/tmp/train_meta_data.yaml')
+    self.assertEqual(cache_files.annotations_json_file,
+                     '/tmp/train_annotations.json')
+
+  def test_filename_from_pascal(self):
+    # Checks the filenames are not equal if any of the parameters is changed.
+    images_dir = '/tmp/images/'
+    annotations_dir = '/tmp/annotations/'
+    annotation_filenames = None
+    num_shards = 1
+    filename = dataloader_util.get_cache_prefix_filename_from_pascal(
+        images_dir=images_dir,
+        annotations_dir=annotations_dir,
+        annotation_filenames=annotation_filenames,
+        num_shards=num_shards)
+
+    images_dir = '/tmp/images_1/'
+    filename1 = dataloader_util.get_cache_prefix_filename_from_pascal(
+        images_dir=images_dir,
+        annotations_dir=annotations_dir,
+        annotation_filenames=annotation_filenames,
+        num_shards=num_shards)
+    self.assertNotEqual(filename, filename1)
+
+    annotations_dir = '/tmp/annotations_2/'
+    filename2 = dataloader_util.get_cache_prefix_filename_from_pascal(
+        images_dir=images_dir,
+        annotations_dir=annotations_dir,
+        annotation_filenames=annotation_filenames,
+        num_shards=num_shards)
+    self.assertNotEqual(filename1, filename2)
+
+    annotation_filenames = ['1', '2']
+    filename3 = dataloader_util.get_cache_prefix_filename_from_pascal(
+        images_dir=images_dir,
+        annotations_dir=annotations_dir,
+        annotation_filenames=annotation_filenames,
+        num_shards=num_shards)
+    self.assertNotEqual(filename2, filename3)
+
+    num_shards = 10
+    filename4 = dataloader_util.get_cache_prefix_filename_from_pascal(
+        images_dir=images_dir,
+        annotations_dir=annotations_dir,
+        annotation_filenames=annotation_filenames,
+        num_shards=num_shards)
+    self.assertNotEqual(filename3, filename4)
+
+  def test_filename_from_csv(self):
+    # Checks the filenames are not equal if any of the parameters is changed.
+    csv_file = '/tmp/1.csv'
+    num_shards = 1
+    filename = dataloader_util.get_cache_prefix_filename_from_csv(
+        csv_file, num_shards)
+
+    csv_file = '/tmp/2.csv'
+    filename1 = dataloader_util.get_cache_prefix_filename_from_csv(
+        csv_file, num_shards)
+    self.assertNotEqual(filename, filename1)
+
+    num_shards = 10
+    filename2 = dataloader_util.get_cache_prefix_filename_from_csv(
+        csv_file, num_shards)
+    self.assertNotEqual(filename1, filename2)
 
 
 class CacheFilesWriterTest(tf.test.TestCase):
@@ -35,23 +106,24 @@ class CacheFilesWriterTest(tf.test.TestCase):
     cache_writer = dataloader_util.PascalVocCacheFilesWriter(
         label_map, images_dir, num_shards=1)
 
-    tfrecord_files = [os.path.join(self.get_temp_dir(), 'pascal.tfrecord')]
-    ann_json_file = os.path.join(self.get_temp_dir(), 'pascal_annotations.json')
-    meta_data_file = os.path.join(self.get_temp_dir(), 'pascal_meta_data.yaml')
-    cache_writer.write_files(tfrecord_files, ann_json_file, meta_data_file,
-                             annotations_dir)
+    cache_files = dataloader_util.get_cache_files(
+        cache_dir=self.get_temp_dir(), cache_prefix_filename='pascal')
+    cache_writer.write_files(cache_files, annotations_dir)
 
     # Checks the TFRecord file.
+    tfrecord_files = cache_files.tfrecord_files
     self.assertTrue(os.path.isfile(tfrecord_files[0]))
     self.assertGreater(os.path.getsize(tfrecord_files[0]), 0)
 
     # Checks the annotation json file.
-    self.assertTrue(os.path.isfile(ann_json_file))
-    self.assertGreater(os.path.getsize(ann_json_file), 0)
+    annotations_json_file = cache_files.annotations_json_file
+    self.assertTrue(os.path.isfile(annotations_json_file))
+    self.assertGreater(os.path.getsize(annotations_json_file), 0)
     expected_json_file = test_util.get_test_data_path('annotations.json')
-    self.assertTrue(filecmp.cmp(ann_json_file, expected_json_file))
+    self.assertTrue(filecmp.cmp(annotations_json_file, expected_json_file))
 
     # Checks the meta_data file.
+    meta_data_file = cache_files.meta_data_file
     self.assertTrue(os.path.isfile(meta_data_file))
     self.assertGreater(os.path.getsize(meta_data_file), 0)
     with tf.io.gfile.GFile(meta_data_file, 'r') as f:
@@ -94,28 +166,25 @@ class CacheFilesWriterTest(tf.test.TestCase):
       with tf.io.gfile.GFile(csv_file, 'r') as f:
         lines = [line for line in csv.reader(f) if line[0].startswith(set_name)]
 
-      tfrecord_files = [
-          os.path.join(self.get_temp_dir(), set_name + '_csv.tfrecord')
-      ]
-      ann_json_file = os.path.join(self.get_temp_dir(),
-                                   set_name + '_csv_annotations.json')
-      meta_data_file = os.path.join(self.get_temp_dir(),
-                                    set_name + '_csv_meta_data.yaml')
-      cache_writer.write_files(tfrecord_files, ann_json_file, meta_data_file,
-                               lines)
+      cache_files = dataloader_util.get_cache_files(
+          cache_dir=self.get_temp_dir(), cache_prefix_filename='csv')
+      cache_writer.write_files(cache_files, lines)
 
       # Checks the TFRecord file.
+      tfrecord_files = cache_files.tfrecord_files
       self.assertTrue(os.path.isfile(tfrecord_files[0]))
       self.assertGreater(os.path.getsize(tfrecord_files[0]), 0)
 
       # Checks the annotation json file.
-      self.assertTrue(os.path.isfile(ann_json_file))
-      self.assertGreater(os.path.getsize(ann_json_file), 0)
+      annotations_json_file = cache_files.annotations_json_file
+      self.assertTrue(os.path.isfile(annotations_json_file))
+      self.assertGreater(os.path.getsize(annotations_json_file), 0)
       expected_json_file = test_util.get_test_data_path(set_name.lower() +
                                                         '_annotations.json')
-      self.assertTrue(filecmp.cmp(ann_json_file, expected_json_file))
+      self.assertTrue(filecmp.cmp(annotations_json_file, expected_json_file))
 
       # Checks the meta_data file.
+      meta_data_file = cache_files.meta_data_file
       self.assertTrue(os.path.isfile(meta_data_file))
       self.assertGreater(os.path.getsize(meta_data_file), 0)
       with tf.io.gfile.GFile(meta_data_file, 'r') as f:

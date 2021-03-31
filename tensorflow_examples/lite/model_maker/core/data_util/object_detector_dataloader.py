@@ -17,10 +17,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import hashlib
-import os
-import tempfile
-from typing import Dict, List, Optional, TypeVar, Union
+import csv
+from typing import Collection, Dict, List, Optional, Tuple, TypeVar, Union
 
 import tensorflow as tf
 from tensorflow_examples.lite.model_maker.core.data_util import dataloader
@@ -31,59 +29,8 @@ from tensorflow_examples.lite.model_maker.third_party.efficientdet import datalo
 from tensorflow_examples.lite.model_maker.third_party.efficientdet.keras import label_util
 
 DetectorDataLoader = TypeVar('DetectorDataLoader', bound='DataLoader')
-
-ANN_JSON_FILE_SUFFIX = '_annotations.json'
-META_DATA_FILE_SUFFIX = '_meta_data.yaml'
-
-
-def _get_cache_prefix_filename(image_dir, annotations_dir, annotations_list,
-                               num_shards):
-  """Get the prefix for cached files."""
-
-  def _get_dir_basename(dirname):
-    return os.path.basename(os.path.abspath(dirname))
-
-  hasher = hashlib.md5()
-  hasher.update(_get_dir_basename(image_dir).encode('utf-8'))
-  hasher.update(_get_dir_basename(annotations_dir).encode('utf-8'))
-  if annotations_list:
-    hasher.update(' '.join(sorted(annotations_list)).encode('utf-8'))
-  hasher.update(str(num_shards).encode('utf-8'))
-  return hasher.hexdigest()
-
-
-def _get_object_detector_cache_filenames(cache_dir,
-                                         image_dir,
-                                         annotations_dir,
-                                         annotations_list,
-                                         num_shards,
-                                         cache_prefix_filename=None):
-  """Gets cache filenames for obejct detector."""
-  if cache_dir is None:
-    cache_dir = tempfile.mkdtemp()
-  if not tf.io.gfile.exists(cache_dir):
-    tf.io.gfile.makedirs(cache_dir)
-
-  if cache_prefix_filename is None:
-    cache_prefix_filename = _get_cache_prefix_filename(image_dir,
-                                                       annotations_dir,
-                                                       annotations_list,
-                                                       num_shards)
-  cache_prefix = os.path.join(cache_dir, cache_prefix_filename)
-  print(
-      'Cache will be stored in %s with prefix filename %s. Cache_prefix is %s' %
-      (cache_dir, cache_prefix_filename, cache_prefix))
-
-  tfrecord_files = [
-      cache_prefix + '-%05d-of-%05d.tfrecord' % (i, num_shards)
-      for i in range(num_shards)
-  ]
-  annotations_json_file = cache_prefix + ANN_JSON_FILE_SUFFIX
-  meta_data_file = cache_prefix + META_DATA_FILE_SUFFIX
-
-  all_cached_files = tfrecord_files + [annotations_json_file, meta_data_file]
-  is_cached = all(os.path.exists(path) for path in all_cached_files)
-  return is_cached, cache_prefix, tfrecord_files, annotations_json_file, meta_data_file
+# Csv lines with the label map.
+CsvLines = Tuple[List[List[List[str]]], Dict[int, str]]
 
 
 def _get_label_map(label_map):
@@ -110,6 +57,45 @@ def _get_label_map(label_map):
                        name)
     name_set.add(name)
   return label_map
+
+
+def _group_csv_lines(csv_file: str,
+                     set_prefixes: List[str],
+                     delimiter: str = ',',
+                     quotechar: str = '"') -> CsvLines:
+  """Groups csv_lines for different set_names and label_map.
+
+  Args:
+    csv_file: filename of the csv file.
+    set_prefixes: Set prefix names for training, validation and test data. e.g.
+      ['TRAIN', 'VAL', 'TEST'].
+    delimiter: Character used to separate fields.
+    quotechar: Character used to quote fields containing special characters.
+
+  Returns:
+    [training csv lines, validation csv lines, test csv lines], label_map
+  """
+  # Dict that maps integer label ids to string label names.
+  label_map = {}
+  with tf.io.gfile.GFile(csv_file, 'r') as f:
+    reader = csv.reader(f, delimiter=delimiter, quotechar=quotechar)
+    # `lines_list` = [training csv lines, validation csv lines, test csv lines]
+    # Each csv line is a list of strings separated by delimiter. e.g.
+    # row 'one,two,three' in the csv file will be ['one', two', 'three'].
+    lines_list = [[], [], []]
+    for line in reader:
+      # Groups lines by the set_name.
+      set_name = line[0].strip()
+      for i, set_prefix in enumerate(set_prefixes):
+        if set_name.startswith(set_prefix):
+          lines_list[i].append(line)
+
+      label = line[2].strip()
+      # Updates label_map if it's a new label.
+      if label not in label_map.values():
+        label_map[len(label_map) + 1] = label
+
+  return lines_list, label_map
 
 
 class DataLoader(dataloader.DataLoader):
@@ -152,7 +138,7 @@ class DataLoader(dataloader.DataLoader):
       images_dir: str,
       annotations_dir: str,
       label_map: Union[List[str], Dict[int, str], str],
-      annotations_list: Optional[List[str]] = None,
+      annotation_filenames: Optional[Collection[str]] = None,
       ignore_difficult_instances: bool = False,
       num_shards: int = 100,
       max_num_images: Optional[int] = None,
@@ -182,10 +168,10 @@ class DataLoader(dataloader.DataLoader):
            the same as setting label_map={1: 'person', 2: 'notperson'}.
         3. String, name for certain dataset. Accepted values are: 'coco', 'voc'
           and 'waymo'. 4. String, yaml filename that stores label_map.
-      annotations_list: list of annotation filenames (strings) to be loaded. For
-        instance, if there're 3 annotation files [0.xml, 1.xml, 2.xml] in
-        `annotations_dir`, setting annotations_list=['0', '1'] makes this method
-        only load [0.xml, 1.xml].
+      annotation_filenames: Collection of annotation filenames (strings) to be
+        loaded. For instance, if there're 3 annotation files [0.xml, 1.xml,
+        2.xml] in `annotations_dir`, setting annotation_filenames=['0', '1']
+        makes this method only load [0.xml, 1.xml].
       ignore_difficult_instances: Whether to ignore difficult instances.
         `difficult` can be set inside `object` item in the annotation xml file.
       num_shards: Number of shards for output file.
@@ -196,20 +182,30 @@ class DataLoader(dataloader.DataLoader):
         later.
       cache_prefix_filename: The cache prefix filename. If not set, will
         automatically generate it based on `image_dir`, `annotations_dir` and
-        `annotations_list`.
+        `annotation_filenames`.
 
     Returns:
       ObjectDetectorDataLoader object.
     """
     label_map = _get_label_map(label_map)
-    is_cached, cache_prefix, tfrecord_files, ann_json_file, meta_data_file = \
-        _get_object_detector_cache_filenames(cache_dir, images_dir,
-                                             annotations_dir, annotations_list,
-                                             num_shards, cache_prefix_filename)
-    # If not cached, write data into tfrecord_file_paths and
+
+    # If `cache_prefix_filename` is None, automatically generates a hash value.
+    if cache_prefix_filename is None:
+      cache_prefix_filename = util.get_cache_prefix_filename_from_pascal(
+          images_dir=images_dir,
+          annotations_dir=annotations_dir,
+          annotation_filenames=annotation_filenames,
+          num_shards=num_shards)
+
+    cache_files = util.get_cache_files(
+        cache_dir=cache_dir,
+        cache_prefix_filename=cache_prefix_filename,
+        num_shards=num_shards)
+
+    # If not cached, writes data into tfrecord_file_paths and
     # annotations_json_file_path.
     # If `num_shards` differs, it's still not cached.
-    if not is_cached:
+    if not util.is_cached(cache_files):
       cache_writer = util.PascalVocCacheFilesWriter(
           label_map=label_map,
           images_dir=images_dir,
@@ -217,13 +213,94 @@ class DataLoader(dataloader.DataLoader):
           max_num_images=max_num_images,
           ignore_difficult_instances=ignore_difficult_instances)
       cache_writer.write_files(
-          tfrecord_files=tfrecord_files,
-          annotations_json_file=ann_json_file,
-          meta_data_file=meta_data_file,
+          cache_files=cache_files,
           annotations_dir=annotations_dir,
-          annotations_list=annotations_list)
+          annotation_filenames=annotation_filenames)
 
-    return cls.from_cache(cache_prefix)
+    return cls.from_cache(cache_files.cache_prefix)
+
+  @classmethod
+  def from_csv(
+      cls,
+      filename: str,
+      images_dir: Optional[str] = None,
+      delimiter: str = ',',
+      quotechar: str = '"',
+      num_shards: int = 10,
+      max_num_images: Optional[int] = None,
+      cache_dir: Optional[str] = None,
+      cache_prefix_filename: Optional[str] = None
+  ) -> List[Optional[DetectorDataLoader]]:
+    """Loads the data from the csv file.
+
+    The csv format is shown in
+    https://cloud.google.com/vision/automl/object-detection/docs/csv-format. We
+    supports bounding box with 2 vertices for now. We support the files in the
+    local machine as well.
+
+    Args:
+      filename: Name of the csv file.
+      images_dir: Path to directory that store raw images. If None, the image
+        path in the csv file is the path to Google Cloud Storage or the absolute
+        path in the local machine.
+      delimiter: Character used to separate fields.
+      quotechar: Character used to quote fields containing special characters.
+      num_shards: Number of shards for output file.
+      max_num_images: Max number of imags to process.
+      cache_dir: The cache directory to save TFRecord, metadata and json file.
+        When cache_dir is None, a temporary folder will be created and will not
+        be removed automatically after training which makes it can be used
+        later.
+      cache_prefix_filename: The cache prefix filename. If None, will
+        automatically generate it based on `filename`.
+
+    Returns:
+      train_data, validation_data, test_data which are ObjectDetectorDataLoader
+      objects. Can be None if without such data.
+    """
+    # If `cache_prefix_filename` is None, automatically generates a hash value.
+    if cache_prefix_filename is None:
+      cache_prefix_filename = util.get_cache_prefix_filename_from_csv(
+          csv_file=filename, num_shards=num_shards)
+
+    # Gets a list of cache files mapping `set_prefixes`.
+    set_prefixes = ['TRAIN', 'VAL', 'TEST']
+    cache_files_list = util.get_cache_files_sequence(
+        cache_dir=cache_dir,
+        cache_prefix_filename=cache_prefix_filename,
+        set_prefixes=set_prefixes,
+        num_shards=num_shards)
+
+    # If not cached, writes data into tfrecord_file_paths and
+    # annotations_json_file_path.
+    # If `num_shards` differs, it's still not cached.
+    if not util.is_all_cached(cache_files_list):
+      lines_list, label_map = _group_csv_lines(
+          csv_file=filename,
+          set_prefixes=set_prefixes,
+          delimiter=delimiter,
+          quotechar=quotechar)
+      cache_writer = util.CsvCacheFilesWriter(
+          label_map=label_map,
+          images_dir=images_dir,
+          num_shards=num_shards,
+          max_num_images=max_num_images)
+      for cache_files, csv_lines in zip(cache_files_list, lines_list):
+        if csv_lines:
+          cache_writer.write_files(cache_files, csv_lines=csv_lines)
+
+    # Loads training & validation & test data from cache.
+    data = []
+    for cache_files in cache_files_list:
+      cache_prefix = cache_files.cache_prefix
+      try:
+        data.append(cls.from_cache(cache_prefix))
+      except ValueError:
+        # No training / validation / test data in the csv file.
+        # For instance, there're only training and test data in the csv file,
+        # this will make this function return `train_data, None, test_data`
+        data.append(None)
+    return data
 
   @classmethod
   def from_cache(cls, cache_prefix):
@@ -242,14 +319,14 @@ class DataLoader(dataloader.DataLoader):
       raise ValueError('TFRecord files are empty.')
 
     # Loads meta_data.
-    meta_data_file = cache_prefix + META_DATA_FILE_SUFFIX
+    meta_data_file = cache_prefix + util.META_DATA_FILE_SUFFIX
     if not tf.io.gfile.exists(meta_data_file):
       raise ValueError('Metadata file %s doesn\'t exist.' % meta_data_file)
     with tf.io.gfile.GFile(meta_data_file, 'r') as f:
       meta_data = yaml.load(f, Loader=yaml.FullLoader)
 
     # Gets annotation json file.
-    ann_json_file = cache_prefix + ANN_JSON_FILE_SUFFIX
+    ann_json_file = cache_prefix + util.ANN_JSON_FILE_SUFFIX
     if not tf.io.gfile.exists(ann_json_file):
       ann_json_file = None
 
