@@ -143,14 +143,14 @@ public class RecognizeCommands {
 
     Log.v(
         "Duration < WD/FRAC?",
-        String.valueOf((samplesDuration < (averageWindowDurationMs / MINIMUM_TIME_FRACTION))));
+        String.valueOf((samplesDuration < (averageWindowDurationMs / MINIMUM_TIME_FRACTION))));*/
 
     if ((howManyResults < minimumCount)
     //        || (samplesDuration < (averageWindowDurationMs / MINIMUM_TIME_FRACTION))
     ) {
       Log.v("RecognizeResult", "Too few results");
       return new RecognitionResult(previousTopLabel, 0.0f, false);
-    }*/
+    }
 
     // Calculate the average score across all the results in the window.
     float[] averageScores = new float[labelsCount];

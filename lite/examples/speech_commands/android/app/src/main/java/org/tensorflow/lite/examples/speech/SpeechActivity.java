@@ -80,9 +80,9 @@ public class SpeechActivity extends Activity
   private static final int SAMPLE_RATE = 16000;
   private static final int SAMPLE_DURATION_MS = 777;
   private static final int RECORDING_LENGTH = (int) (SAMPLE_RATE * SAMPLE_DURATION_MS / 1000);
-  private static final long AVERAGE_WINDOW_DURATION_MS = 777;
-  private static final float DETECTION_THRESHOLD = 0.5f;
-  private static final int SUPPRESSION_MS = 777;
+  private static final long AVERAGE_WINDOW_DURATION_MS = 225;
+  private static final float DETECTION_THRESHOLD = 0.45f;
+  private static final int SUPPRESSION_MS = 250;
   private static final int MINIMUM_COUNT = 3;
   private static final long MINIMUM_TIME_BETWEEN_SAMPLES_MS = 0;
   private static final String LABEL_FILENAME = "file:///android_asset/conv_actions_labels.txt";
@@ -105,7 +105,6 @@ public class SpeechActivity extends Activity
   private final ReentrantLock tfLiteLock = new ReentrantLock();
 
   private List<String> labels = new ArrayList<String>();
-  private List<String> displayedLabels = new ArrayList<>();
   private RecognizeCommands recognizeCommands = null;
   private LinearLayout bottomSheetLayout;
   private LinearLayout gestureLayout;
@@ -154,9 +153,6 @@ public class SpeechActivity extends Activity
       String line;
       while ((line = br.readLine()) != null) {
         labels.add(line);
-        if (line.charAt(0) != '_') {
-          displayedLabels.add(line.substring(0, 1).toUpperCase() + line.substring(1));
-        }
       }
       br.close();
     } catch (IOException e) {
@@ -463,17 +459,17 @@ public class SpeechActivity extends Activity
                               getResources().getColor(android.R.color.darker_gray));
                         }
                       },
-                      750);
+                          AVERAGE_WINDOW_DURATION_MS);
                 }
               }
             }
           });
-      try {
+      /*try {
         // We don't need to run too frequently, so snooze for a bit.
         Thread.sleep(MINIMUM_TIME_BETWEEN_SAMPLES_MS);
       } catch (InterruptedException e) {
         // Ignore
-      }
+      }*/
     }
 
     Log.v(LOG_TAG, "End recognition");
