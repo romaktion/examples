@@ -173,21 +173,27 @@ class ApiUtilTest(tf.test.TestCase):
     }
     self.assertDictEqual(imports, expected_imports)
 
+    version = '0.0.0-test'
     with tempfile.TemporaryDirectory() as tmp_dir:
-      api_util.write_packages(tmp_dir, imports)
+      api_util.write_packages(tmp_dir, imports, api_util.PACKAGE_PREFIX,
+                              version)
 
       # Checks existence of __init__ file and its content.
       for package_name, symbols in expected_imports.items():
-        parts = api_util._split_name(package_name)
-        path = api_util._as_path(parts)
+        parts = api_util.split_name(package_name)
+        path = api_util.as_path(parts)
         init_file = os.path.join(tmp_dir, path, '__init__.py')
         self.assertTrue(os.path.exists(init_file))
         self.assertGreater(os.path.getsize(init_file), 0)
         with tf.io.gfile.GFile(init_file) as f:
           content = f.read()
-          self.assertIn(api_util.HEADER, content)
+          self.assertIn(api_util.LICENSE, content)
+          self.assertIn('Generated API for package:', content)
           for symbol in symbols:
             self.assertIn(symbol, content)
+
+          if package_name == api_util.PACKAGE_PREFIX:
+            self.assertIn("""__version__ = '0.0.0-test'""", content)
 
 
 if __name__ == '__main__':

@@ -14,7 +14,7 @@
 """CLI utility to generate APIs.
 
 Usage:
-python api_gen --output_dir=<path to output>
+python api_gen --output_dir=<path to output> --version=0.x.x
 """
 
 import argparse
@@ -23,6 +23,8 @@ import pathlib
 from typing import Dict, Sequence
 
 from tensorflow_examples.lite.model_maker.core.api import api_util
+
+DEFAULT_API_FILE = 'golden_api.json'
 
 
 def parse_arguments():
@@ -34,8 +36,14 @@ def parse_arguments():
       '-i',
       '--input_json',
       type=str,
-      default='golden_api.json',
+      default=DEFAULT_API_FILE,
       help='JSON file for Golden APIs.')
+  parser.add_argument(
+      '-v',
+      '--version',
+      type=str,
+      default='0.0.0dev',
+      help='Version of the package.')
   return parser.parse_args()
 
 
@@ -52,15 +60,16 @@ def load_golden(json_file: str) -> Dict[str, Sequence[str]]:
   return json.loads(content)
 
 
-def run(output_dir: str, input_json: str) -> None:
+def run(output_dir: str, input_json: str, base_package: str,
+        version: str) -> None:
   """Runs main."""
   imports = load_golden(input_json)
-  api_util.write_packages(output_dir, imports)
+  api_util.write_packages(output_dir, imports, base_package, version)
 
 
 def main() -> None:
   args = parse_arguments()
-  run(args.output_dir, args.input_json)
+  run(args.output_dir, args.input_json, api_util.PACKAGE_PREFIX, args.version)
 
 
 if __name__ == '__main__':

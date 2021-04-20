@@ -14,6 +14,7 @@
 """Model specification for object detection."""
 
 import collections
+import logging
 import os
 import tempfile
 from typing import Optional, Tuple, Dict
@@ -21,6 +22,7 @@ from typing import Optional, Tuple, Dict
 from absl import logging
 import tensorflow as tf
 from tensorflow_examples.lite.model_maker.core import compat
+from tensorflow_examples.lite.model_maker.core.api.api_util import mm_export
 from tensorflow_examples.lite.model_maker.core.data_util import object_detector_dataloader
 from tensorflow_examples.lite.model_maker.core.export_format import QuantizationType
 from tensorflow_examples.lite.model_maker.core.task import configs
@@ -106,6 +108,7 @@ class ExportModel(efficientdet_keras.EfficientDetModel):
     return outputs
 
 
+@mm_export('object_detector.EfficientDetSpec')
 class EfficientDetModelSpec(object):
   """A specification of the EfficientDet model."""
 
@@ -286,7 +289,7 @@ class EfficientDetModelSpec(object):
   def _get_metric_dict(self, evaluator: coco_metric.EvaluationMetric,
                        label_map: collections.OrderedDict) -> Dict[str, float]:
     """Gets the metric dict for evaluation."""
-    metrics = evaluator.result()
+    metrics = evaluator.result(log_level=logging.INFO)
     metric_dict = {}
     for i, name in enumerate(evaluator.metric_names):
       metric_dict[name] = metrics[i]
@@ -534,6 +537,7 @@ class EfficientDetModelSpec(object):
         f.write(tflite_model)
 
 
+@mm_export('object_detector.EfficientDetLite0Spec')
 def efficientdet_lite0_spec(**kwargs) -> EfficientDetModelSpec:
   args = util.dict_with_default(
       default_dict=dict(
@@ -544,6 +548,7 @@ def efficientdet_lite0_spec(**kwargs) -> EfficientDetModelSpec:
   return EfficientDetModelSpec(**args)
 
 
+@mm_export('object_detector.EfficientDetLite1Spec')
 def efficientdet_lite1_spec(**kwargs) -> EfficientDetModelSpec:
   args = util.dict_with_default(
       default_dict=dict(
@@ -554,6 +559,7 @@ def efficientdet_lite1_spec(**kwargs) -> EfficientDetModelSpec:
   return EfficientDetModelSpec(**args)
 
 
+@mm_export('object_detector.EfficientDetLite2Spec')
 def efficientdet_lite2_spec(**kwargs) -> EfficientDetModelSpec:
   args = util.dict_with_default(
       default_dict=dict(
@@ -564,6 +570,7 @@ def efficientdet_lite2_spec(**kwargs) -> EfficientDetModelSpec:
   return EfficientDetModelSpec(**args)
 
 
+@mm_export('object_detector.EfficientDetLite3Spec')
 def efficientdet_lite3_spec(**kwargs) -> EfficientDetModelSpec:
   args = util.dict_with_default(
       default_dict=dict(
@@ -574,6 +581,7 @@ def efficientdet_lite3_spec(**kwargs) -> EfficientDetModelSpec:
   return EfficientDetModelSpec(**args)
 
 
+@mm_export('object_detector.EfficientDetLite4Spec')
 def efficientdet_lite4_spec(**kwargs) -> EfficientDetModelSpec:
   args = util.dict_with_default(
       default_dict=dict(
