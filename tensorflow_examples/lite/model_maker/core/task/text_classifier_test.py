@@ -26,9 +26,8 @@ from tensorflow_examples.lite.model_maker.core import compat
 from tensorflow_examples.lite.model_maker.core import test_util
 from tensorflow_examples.lite.model_maker.core.data_util import text_dataloader
 from tensorflow_examples.lite.model_maker.core.export_format import ExportFormat
-from tensorflow_examples.lite.model_maker.core.task import configs
-from tensorflow_examples.lite.model_maker.core.task import model_spec as ms
 from tensorflow_examples.lite.model_maker.core.task import text_classifier
+from tensorflow_examples.lite.model_maker.core.task.model_spec import text_spec
 
 
 class TextClassifierTest(tf.test.TestCase):
@@ -56,7 +55,7 @@ class TextClassifierTest(tf.test.TestCase):
   @test_util.test_in_tf_1
   def test_average_wordvec_model_create_v1_incompatible(self):
     with self.assertRaisesRegex(ValueError, 'Incompatible versions'):
-      model_spec = ms.AverageWordVecModelSpec(seq_len=2)
+      model_spec = text_spec.AverageWordVecModelSpec(seq_len=2)
       all_data = text_dataloader.TextClassifierDataLoader.from_folder(
           self.text_dir, model_spec=model_spec)
       _ = text_classifier.create(
@@ -66,7 +65,7 @@ class TextClassifierTest(tf.test.TestCase):
 
   @test_util.test_in_tf_2
   def test_bert_model(self):
-    model_spec = ms.BertClassifierModelSpec(seq_len=2, trainable=False)
+    model_spec = text_spec.BertClassifierModelSpec(seq_len=2, trainable=False)
     all_data = text_dataloader.TextClassifierDataLoader.from_folder(
         self.tiny_text_dir, model_spec=model_spec)
     # Splits data, 50% data for training, 50% for testing
@@ -84,7 +83,7 @@ class TextClassifierTest(tf.test.TestCase):
 
   @test_util.test_in_tf_2
   def test_mobilebert_model(self):
-    model_spec = ms.mobilebert_classifier_spec(
+    model_spec = text_spec.mobilebert_classifier_spec(
         seq_len=2, trainable=False, default_batch_size=1)
     all_data = text_dataloader.TextClassifierDataLoader.from_folder(
         self.tiny_text_dir, model_spec=model_spec)
@@ -98,11 +97,11 @@ class TextClassifierTest(tf.test.TestCase):
         shuffle=True)
     self._test_accuracy(model, 0.0)
     self._test_export_to_tflite(model, threshold=0.0, atol=1e-2)
-    self._test_export_to_tflite_quant(model)
+    self._test_export_to_tflite_quant(model, model_size=25555047)
 
   @test_util.test_in_tf_2
   def test_mobilebert_model_without_training_for_tfjs(self):
-    model_spec = ms.mobilebert_classifier_spec(
+    model_spec = text_spec.mobilebert_classifier_spec(
         seq_len=2, trainable=False, default_batch_size=1)
     all_data = text_dataloader.TextClassifierDataLoader.from_folder(
         self.text_dir, model_spec=model_spec)
@@ -112,7 +111,7 @@ class TextClassifierTest(tf.test.TestCase):
 
   @test_util.test_in_tf_2
   def test_average_wordvec_model(self):
-    model_spec = ms.AverageWordVecModelSpec(seq_len=2)
+    model_spec = text_spec.AverageWordVecModelSpec(seq_len=2)
     all_data = text_dataloader.TextClassifierDataLoader.from_folder(
         self.text_dir, model_spec=model_spec)
     # Splits data, 90% data for training, 10% for testing
@@ -194,6 +193,7 @@ class TextClassifierTest(tf.test.TestCase):
     model.export(
         self.get_temp_dir(),
         export_format=ExportFormat.TFLITE,
+        quantization_config=None,
         export_metadata_json_file=expected_json_file is not None)
 
     self.assertTrue(tf.io.gfile.exists(tflite_output_file))
@@ -203,10 +203,10 @@ class TextClassifierTest(tf.test.TestCase):
     self.assertGreaterEqual(result['accuracy'], threshold)
 
     spec = model.model_spec
-    if isinstance(spec, ms.AverageWordVecModelSpec):
+    if isinstance(spec, text_spec.AverageWordVecModelSpec):
       random_inputs = np.random.randint(
           low=0, high=len(spec.vocab), size=(1, spec.seq_len), dtype=np.int32)
-    elif isinstance(spec, ms.BertClassifierModelSpec):
+    elif isinstance(spec, text_spec.BertClassifierModelSpec):
       input_word_ids = np.random.randint(
           low=0,
           high=len(spec.tokenizer.vocab),
@@ -240,24 +240,24 @@ class TextClassifierTest(tf.test.TestCase):
 
   def _test_export_to_tfjs(self, model):
     output_path = os.path.join(self.get_temp_dir(), 'tfjs')
-    model.export(self.get_temp_dir(), export_format=ExportFormat.TFJS)
+    model.export(
+        self.get_temp_dir(),
+        export_format=[ExportFormat.TFLITE, ExportFormat.TFJS])
 
     self.assertTrue(os.path.isdir(output_path))
     self.assertNotEmpty(os.listdir(output_path))
 
-  def _test_export_to_tflite_quant(self, model):
+  def _test_export_to_tflite_quant(self, model, model_size, err_ratio=0.08):
     tflite_filename = 'model_quant.tflite'
     tflite_output_file = os.path.join(self.get_temp_dir(), tflite_filename)
-    config = configs.QuantizationConfig.create_dynamic_range_quantization(
-        optimizations=[tf.lite.Optimize.OPTIMIZE_FOR_LATENCY])
     model.export(
         self.get_temp_dir(),
         tflite_filename=tflite_filename,
-        export_format=ExportFormat.TFLITE,
-        quantization_config=config)
+        export_format=ExportFormat.TFLITE)
 
     self.assertTrue(tf.io.gfile.exists(tflite_output_file))
-    self.assertGreater(os.path.getsize(tflite_output_file), 0)
+    err = model_size * err_ratio
+    self.assertNear(os.path.getsize(tflite_output_file), model_size, err)
 
 
 if __name__ == '__main__':

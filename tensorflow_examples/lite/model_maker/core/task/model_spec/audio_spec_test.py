@@ -18,27 +18,83 @@ from __future__ import division
 from __future__ import print_function
 
 import os
+import unittest
 
 import numpy as np
 import tensorflow.compat.v2 as tf
+from tensorflow_examples.lite.model_maker.core.task import model_util
 from tensorflow_examples.lite.model_maker.core.task.model_spec import audio_spec
 
 
-class YAMNetSpecTest(tf.test.TestCase):
+def _gen_dataset(spec, total_samples, num_classes, batch_size, seed):
 
-  @classmethod
-  def setUpClass(cls):
-    super(YAMNetSpecTest, cls).setUpClass()
-    cls._spec = audio_spec.YAMNetSpec()
+  def fill_shape(new_shape):
+
+    @tf.function
+    def fn(value):
+      return tf.cast(tf.fill(dims=new_shape, value=value), tf.float32)
+
+    return fn
+
+  wav_ds = tf.data.experimental.RandomDataset(seed=seed).take(total_samples)
+  wav_ds = wav_ds.map(fill_shape([
+      spec.target_sample_rate,
+  ]))
+
+  labels = tf.data.Dataset.from_tensor_slices(
+      np.random.randint(low=0, high=num_classes,
+                        size=total_samples).astype('int32'))
+  dataset = tf.data.Dataset.zip((wav_ds, labels))
+  dataset = spec.preprocess_ds(dataset)
+
+  @tf.function
+  def _one_hot_encoding_label(wav, label):
+    return wav, tf.one_hot(label, num_classes)
+
+  dataset = dataset.map(_one_hot_encoding_label)
+
+  dataset = dataset.batch(batch_size)
+
+  return dataset
+
+
+class BaseSpecTest(tf.test.TestCase):
+
+  def testEnsureVersion(self):
+    valid_versions = ['2.5.0', '2.5.0rc1', '2.6']
+    invalid_versions = [
+        '2.4.1',
+    ]
+    specs = [audio_spec.YAMNetSpec, audio_spec.BrowserFFTSpec]
+
+    tmp_version_fn = audio_spec._get_tf_version
+    for spec in specs:
+      for version in valid_versions:
+        audio_spec._get_tf_version = lambda: version  # pylint: disable=cell-var-from-loop
+        spec()
+
+      for version in invalid_versions:
+        audio_spec._get_tf_version = lambda: version  # pylint: disable=cell-var-from-loop
+        with self.assertRaisesRegexp(RuntimeError, '2.5.0'):
+          spec()
+
+    audio_spec._get_tf_version = tmp_version_fn
+
+
+@unittest.skipIf(tf.__version__ < '2.5',
+                 'Audio Classification requires TF 2.5 or later')
+class YAMNetSpecTest(tf.test.TestCase):
 
   def _test_preprocess(self, input_shape, input_count, output_shape,
                        output_count):
+    spec = audio_spec.YAMNetSpec()
     wav_ds = tf.data.Dataset.from_tensor_slices([tf.ones(input_shape)] *
                                                 input_count)
-    label_ds = tf.data.Dataset.range(input_count)
+    label_ds = tf.data.Dataset.range(input_count).map(
+        lambda x: tf.cast(x, tf.int32))
 
     ds = tf.data.Dataset.zip((wav_ds, label_ds))
-    ds = self._spec.preprocess_ds(ds)
+    ds = spec.preprocess_ds(ds)
 
     chunks = output_count // input_count
 
@@ -55,72 +111,238 @@ class YAMNetSpecTest(tf.test.TestCase):
       cnt += 1
 
   def test_preprocess(self):
-    # YAMNet does padding on the input.
+    # No padding on the input.
     self._test_preprocess(
-        input_shape=(10,), input_count=2, output_shape=(1024,), output_count=2)
+        input_shape=(10,), input_count=2, output_shape=(1024,), output_count=0)
     # Split the input data into trunks
     self._test_preprocess(
         input_shape=(16000 * 2,),
         input_count=2,
         output_shape=(1024,),
-        output_count=8)
+        output_count=6)
     self._test_preprocess(
-        input_shape=(8000,),
+        input_shape=(15600,),
         input_count=1,
         output_shape=(1024,),
         output_count=1)
 
   def test_create_model(self):
-    # Make sure that there is no naming conflicts.
-    model = self._spec.create_model(10)
-    model = self._spec.create_model(10)
-    model = self._spec.create_model(10)
+    # Make sure that there is no naming conflicts in the graph.
+    spec = audio_spec.YAMNetSpec()
+    model = spec.create_model(10)
+    model = spec.create_model(10)
+    model = spec.create_model(10)
     self.assertEqual(model.input_shape, (None, 1024))
     self.assertEqual(model.output_shape, (None, 10))
 
-  def _train(self, total_samples, num_classes, batch_size, seed):
-    tf.keras.backend.clear_session()
+  def _train_and_export(self, spec, num_classes, filename, expected_model_size):
+    dataset = _gen_dataset(
+        spec, total_samples=10, num_classes=num_classes, batch_size=2, seed=100)
+    model = spec.create_model(num_classes)
+    spec.run_classifier(model, epochs=1, train_ds=dataset, validation_ds=None)
 
-    def fill_shape(new_shape):
+    tflite_filepath = os.path.join(self.get_temp_dir(), filename)
+    spec.export_tflite(
+        model,
+        tflite_filepath,
+        index_to_label=['label_{}'.format(i) for i in range(num_classes)])
 
-      @tf.function
-      def fn(value):
-        return tf.cast(tf.fill(dims=new_shape, value=value), tf.float32)
-
-      return fn
-
-    tf.random.set_seed(seed)
-    np.random.seed(seed)
-
-    wav_ds = tf.data.experimental.RandomDataset(seed=seed).take(total_samples)
-    wav_ds = wav_ds.map(fill_shape([
-        16000,
-    ]))
-
-    labels = tf.data.Dataset.from_tensor_slices(
-        np.random.randint(low=0, high=num_classes, size=total_samples))
-    dataset = tf.data.Dataset.zip((wav_ds, labels))
-    dataset = self._spec.preprocess_ds(dataset)
-    dataset = dataset.batch(batch_size)
-
-    model = self._spec.create_model(num_classes)
-    self._spec.run_classifier(
-        model, epochs=1, train_ds=dataset, validation_ds=dataset)
-
-    # Test tflite export
-    tflite_filepath = os.path.join(self.get_temp_dir(), 'model.tflite')
-    self._spec.export_tflite(model, tflite_filepath)
-    expected_model_size = 16 * 1000 * 1000
     self.assertNear(
         os.path.getsize(tflite_filepath), expected_model_size, 1000 * 1000)
 
+    return tflite_filepath
+
+  def test_yamnet_two_heads(self):
+    tflite_path = self._train_and_export(
+        audio_spec.YAMNetSpec(keep_yamnet_and_custom_heads=True),
+        num_classes=2,
+        filename='two_heads.tflite',
+        expected_model_size=15 * 1000 * 1000)
+    self.assertEqual(
+        2, len(model_util.get_lite_runner(tflite_path).output_details))
+    self.assertAllEqual(
+        [1, 521],
+        model_util.get_lite_runner(tflite_path).output_details[0]['shape'])
+    self.assertAllEqual(
+        [1, 2],
+        model_util.get_lite_runner(tflite_path).output_details[1]['shape'])
+    self.assertEqual(
+        model_util.extract_tflite_metadata_json(tflite_path), """{
+  "name": "yamnet/classification",
+  "description": "Recognizes sound events",
+  "version": "v1",
+  "subgraph_metadata": [
+    {
+      "input_tensor_metadata": [
+        {
+          "name": "audio_clip",
+          "description": "Input audio clip to be classified.",
+          "content": {
+            "content_properties_type": "AudioProperties",
+            "content_properties": {
+              "sample_rate": 16000,
+              "channels": 1
+            }
+          },
+          "stats": {
+          }
+        }
+      ],
+      "output_tensor_metadata": [
+        {
+          "name": "scores",
+          "description": "Scores in range 0..1.0 for each of the 521 output classes.",
+          "content": {
+            "content_properties_type": "FeatureProperties",
+            "content_properties": {
+            }
+          },
+          "stats": {
+            "max": [
+              1.0
+            ],
+            "min": [
+              0.0
+            ]
+          },
+          "associated_files": [
+            {
+              "name": "yamnet_label_list.txt",
+              "description": "Labels for categories that the model can recognize.",
+              "type": "TENSOR_AXIS_LABELS"
+            }
+          ]
+        },
+        {
+          "name": "classification",
+          "description": "Scores in range 0..1.0 for each output classes.",
+          "content": {
+            "content_properties_type": "FeatureProperties",
+            "content_properties": {
+            }
+          },
+          "stats": {
+            "max": [
+              1.0
+            ],
+            "min": [
+              0.0
+            ]
+          },
+          "associated_files": [
+            {
+              "name": "custom_label_list.txt",
+              "description": "Labels for categories that the model can recognize.",
+              "type": "TENSOR_AXIS_LABELS"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "author": "TensorFlow Lite Model Maker",
+  "license": "Apache License. Version 2.0 http://www.apache.org/licenses/LICENSE-2.0.",
+  "min_parser_version": "1.3.0"
+}
+""")
+
+  def test_yamnet_single_head(self):
+    tflite_path = self._train_and_export(
+        audio_spec.YAMNetSpec(keep_yamnet_and_custom_heads=False),
+        num_classes=2,
+        filename='single_head.tflite',
+        expected_model_size=13 * 1000 * 1000)
+    self.assertEqual(
+        1, len(model_util.get_lite_runner(tflite_path).output_details))
+    self.assertAllEqual(
+        [1, 2],
+        model_util.get_lite_runner(tflite_path).output_details[0]['shape'])
+    self.assertEqual(
+        model_util.extract_tflite_metadata_json(tflite_path), """{
+  "name": "yamnet/classification",
+  "description": "Recognizes sound events",
+  "version": "v1",
+  "subgraph_metadata": [
+    {
+      "input_tensor_metadata": [
+        {
+          "name": "audio_clip",
+          "description": "Input audio clip to be classified.",
+          "content": {
+            "content_properties_type": "AudioProperties",
+            "content_properties": {
+              "sample_rate": 16000,
+              "channels": 1
+            }
+          },
+          "stats": {
+          }
+        }
+      ],
+      "output_tensor_metadata": [
+        {
+          "name": "classification",
+          "description": "Scores in range 0..1.0 for each output classes.",
+          "content": {
+            "content_properties_type": "FeatureProperties",
+            "content_properties": {
+            }
+          },
+          "stats": {
+            "max": [
+              1.0
+            ],
+            "min": [
+              0.0
+            ]
+          },
+          "associated_files": [
+            {
+              "name": "custom_label_list.txt",
+              "description": "Labels for categories that the model can recognize.",
+              "type": "TENSOR_AXIS_LABELS"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "author": "TensorFlow Lite Model Maker",
+  "license": "Apache License. Version 2.0 http://www.apache.org/licenses/LICENSE-2.0.",
+  "min_parser_version": "1.3.0"
+}
+""")
+
+  def test_no_metadata(self):
+    audio_spec.ENABLE_METADATA = False
+    tflite_path = self._train_and_export(
+        audio_spec.YAMNetSpec(keep_yamnet_and_custom_heads=True),
+        num_classes=2,
+        filename='two_heads.tflite',
+        expected_model_size=15 * 1000 * 1000)
+    self.assertEqual(
+        2, len(model_util.get_lite_runner(tflite_path).output_details))
+    with self.assertRaisesRegex(ValueError, 'The model does not have metadata'):
+      model_util.extract_tflite_metadata_json(tflite_path)
+    audio_spec.ENABLE_METADATA = True
+
   def test_binary_classification(self):
-    self._train(total_samples=10, num_classes=2, batch_size=2, seed=100)
+    self._train_and_export(
+        audio_spec.YAMNetSpec(keep_yamnet_and_custom_heads=True),
+        num_classes=2,
+        filename='binary_classification.tflite',
+        expected_model_size=15 * 1000 * 1000)
 
   def test_basic_training(self):
-    self._train(total_samples=20, num_classes=3, batch_size=2, seed=100)
+    self._train_and_export(
+        audio_spec.YAMNetSpec(keep_yamnet_and_custom_heads=True),
+        num_classes=5,
+        filename='basic_5_classes_training.tflite',
+        expected_model_size=15 * 1000 * 1000)
 
 
+@unittest.skipIf(tf.__version__ < '2.5',
+                 'Audio Classification requires TF 2.5 or later')
 class BrowserFFTSpecTest(tf.test.TestCase):
 
   @classmethod
@@ -162,27 +384,11 @@ class BrowserFFTSpecTest(tf.test.TestCase):
   def _train(self, total_samples, num_classes, batch_size, seed):
     tf.keras.backend.clear_session()
 
-    def fill_shape(new_shape):
-
-      def fn(value):
-        return tf.fill(dims=new_shape, value=value)
-
-      return fn
-
     tf.random.set_seed(seed)
     np.random.seed(seed)
 
-    wav_ds = tf.data.experimental.RandomDataset(seed=seed).take(total_samples)
-    wav_ds = wav_ds.map(fill_shape([
-        self._spec.expected_waveform_len,
-    ]))
-
-    labels = tf.data.Dataset.from_tensor_slices(
-        np.random.randint(low=0, high=num_classes, size=total_samples))
-    dataset = tf.data.Dataset.zip((wav_ds, labels))
-    dataset = self._spec.preprocess_ds(dataset)
-    dataset = dataset.batch(batch_size)
-
+    dataset = _gen_dataset(self._spec, total_samples, num_classes, batch_size,
+                           seed)
     model = self._spec.create_model(num_classes)
     self._spec.run_classifier(
         model, epochs=1, train_ds=dataset, validation_ds=dataset)

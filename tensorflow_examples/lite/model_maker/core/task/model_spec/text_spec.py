@@ -18,6 +18,7 @@ from __future__ import division
 from __future__ import print_function
 
 import collections
+import functools
 import os
 import re
 import tempfile
@@ -26,6 +27,7 @@ import tensorflow as tf
 from tensorflow_examples.lite.model_maker.core import compat
 from tensorflow_examples.lite.model_maker.core import file_util
 from tensorflow_examples.lite.model_maker.core.api import mm_export
+from tensorflow_examples.lite.model_maker.core.task import configs
 from tensorflow_examples.lite.model_maker.core.task import hub_loader
 from tensorflow_examples.lite.model_maker.core.task import model_util
 from tensorflow_examples.lite.model_maker.core.task.model_spec import util
@@ -244,6 +246,10 @@ class AverageWordVecModelSpec(object):
         'lowercase': self.lowercase
     }
 
+  def get_default_quantization_config(self):
+    """Gets the default quantization configuration."""
+    return None
+
 
 def create_classifier_model(bert_config,
                             num_labels,
@@ -403,6 +409,12 @@ class BertModelSpec(object):
       }
     self.tflite_input_name = tflite_input_name
     self.default_batch_size = default_batch_size
+
+  def get_default_quantization_config(self):
+    """Gets the default quantization configuration."""
+    config = configs.QuantizationConfig.for_dynamic()
+    config.experimental_new_quantizer = True
+    return config
 
   def reorder_input_details(self, tflite_input_details):
     """Reorders the tflite input details to map the order of keras model."""
@@ -967,62 +979,51 @@ class BertQAModelSpec(BertModelSpec):
     return eval_metrics
 
 
-def average_word_vec_spec(**kwargs):
-  return AverageWordVecModelSpec(**kwargs)
+mobilebert_classifier_spec = functools.partial(
+    BertClassifierModelSpec,
+    uri='https://tfhub.dev/google/mobilebert/uncased_L-24_H-128_B-512_A-4_F-4_OPT/1',
+    is_tf2=False,
+    distribution_strategy='off',
+    name='MobileBert',
+    default_batch_size=48,
+)
+mobilebert_classifier_spec.__doc__ = util.wrap_doc(
+    BertClassifierModelSpec,
+    'Creates MobileBert model spec for the text classification task. See also: `tflite_model_maker.text_classifier.BertClassifierSpec`.'
+)
+mm_export('text_classifier.MobileBertClassifierSpec').export_constant(
+    __name__, 'mobilebert_classifier_spec')
 
+mobilebert_qa_spec = functools.partial(
+    BertQAModelSpec,
+    uri='https://tfhub.dev/google/mobilebert/uncased_L-24_H-128_B-512_A-4_F-4_OPT/1',
+    is_tf2=False,
+    distribution_strategy='off',
+    learning_rate=4e-05,
+    name='MobileBert',
+    default_batch_size=32,
+)
+mobilebert_qa_spec.__doc__ = util.wrap_doc(
+    BertQAModelSpec,
+    'Creates MobileBert model spec for the question answer task. See also: `tflite_model_maker.question_answer.BertQaSpec`.'
+)
+mm_export('question_answer.MobileBertQaSpec').export_constant(
+    __name__, 'mobilebert_qa_spec')
 
-def bert_spec(**kwargs):
-  return BertModelSpec(**kwargs)
-
-
-def bert_classifier_spec(**kwargs):
-  return BertClassifierModelSpec(**kwargs)
-
-
-def bert_qa_spec(**kwargs):
-  return BertQAModelSpec(**kwargs)
-
-
-@mm_export('text_classifier.MobileBertClassifierSpec')
-def mobilebert_classifier_spec(**kwargs):
-  """Model specification for MobileBERT in the text classification task."""
-  args = util.dict_with_default(
-      default_dict=dict(
-          uri='https://tfhub.dev/google/mobilebert/uncased_L-24_H-128_B-512_A-4_F-4_OPT/1',
-          is_tf2=False,
-          distribution_strategy='off',
-          name='MobileBert',
-          default_batch_size=48),
-      **kwargs)
-  return BertClassifierModelSpec(**args)
-
-
-@mm_export('question_answer.MobileBertQaSpec')
-def mobilebert_qa_spec(**kwargs):
-  """Model specification for MobileBERT in the question answer task."""
-  args = util.dict_with_default(
-      default_dict=dict(
-          uri='https://tfhub.dev/google/mobilebert/uncased_L-24_H-128_B-512_A-4_F-4_OPT/1',
-          is_tf2=False,
-          distribution_strategy='off',
-          learning_rate=4e-05,
-          name='MobileBert',
-          default_batch_size=32),
-      **kwargs)
-  return BertQAModelSpec(**args)
-
-
-@mm_export('question_answer.MobileBertQaSquadSpec')
-def mobilebert_qa_squad_spec(**kwargs):
-  """Model specification for MobileBERT that already retrained on SQuAD1.1."""
-  args = util.dict_with_default(
-      default_dict=dict(
-          uri='https://tfhub.dev/google/mobilebert/uncased_L-24_H-128_B-512_A-4_F-4_OPT/squadv1/1',
-          is_tf2=False,
-          distribution_strategy='off',
-          learning_rate=4e-05,
-          name='MobileBert',
-          init_from_squad_model=True,
-          default_batch_size=32),
-      **kwargs)
-  return BertQAModelSpec(**args)
+mobilebert_qa_squad_spec = functools.partial(
+    BertQAModelSpec,
+    uri='https://tfhub.dev/google/mobilebert/uncased_L-24_H-128_B-512_A-4_F-4_OPT/squadv1/1',
+    is_tf2=False,
+    distribution_strategy='off',
+    learning_rate=4e-05,
+    name='MobileBert',
+    init_from_squad_model=True,
+    default_batch_size=32,
+)
+mobilebert_qa_squad_spec.__doc__ = util.wrap_doc(
+    BertQAModelSpec,
+    'Creates MobileBert model spec that\'s already retrained on SQuAD1.1 for '
+    'the question answer task. See also: `tflite_model_maker.question_answer.BertQaSpec`.'
+)
+mm_export('question_answer.MobileBertQaSquadSpec').export_constant(
+    __name__, 'mobilebert_qa_squad_spec')

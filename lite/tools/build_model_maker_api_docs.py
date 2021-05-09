@@ -23,12 +23,14 @@ python build_docs.py --output_dir=/path/to/output
 
 """
 import pathlib
+from typing import Any, Sequence
 
 from absl import app
 from absl import flags
 
 from tensorflow_docs.api_generator import generate_lib
 from tensorflow_docs.api_generator import public_api
+from tensorflow_docs.api_generator.public_api import Children
 
 import tensorflow_examples
 import tflite_model_maker
@@ -50,9 +52,10 @@ OrderedDumper.add_representer(dict, _dict_representer)
 flags.DEFINE_string('output_dir', '/tmp/mm_api/',
                     'The path to output the files to')
 
-flags.DEFINE_string('code_url_prefix',
-                    'https://github.com/tensorflow/examples/blob/master/',
-                    'The url prefix for links to code.')
+flags.DEFINE_string(
+    'code_url_prefix',
+    'https://github.com/tensorflow/examples/blob/master/tensorflow_examples/lite/model_maker/public',
+    'The url prefix for links to code.')
 
 flags.DEFINE_bool('search_hints', True,
                   'Include metadata search hints in the generated files')
@@ -63,19 +66,44 @@ flags.DEFINE_string('site_path', '/lite/api_docs/python',
 FLAGS = flags.FLAGS
 
 
+class DeprecatedAPIFilter(object):
+  """Filter deprecated APIs."""
+
+  def __init__(self):
+    """Constructor."""
+    self._deprecated = [
+        'tflite_model_maker.configs',
+        'tflite_model_maker.ExportFormat',
+        'tflite_model_maker.ImageClassifierDataLoader',
+    ]
+
+  def _is_deprecated(self, path: Sequence[str], child_name: str) -> bool:
+    full_name = list(path) + [child_name]
+    full_name = '.'.join(full_name)
+
+    for d in self._deprecated:
+      if full_name == d:
+        return True
+    return False
+
+  def __call__(self, path: Sequence[str], parent: Any,
+               children: Children) -> Children:
+    return [(child_name, child_obj)
+            for child_name, child_obj in list(children)
+            if not self._is_deprecated(path, child_name)]
+
+
 def main(_):
   doc_generator = generate_lib.DocGenerator(
       root_title='TensorFlow Lite Model Maker',
       py_modules=[('tflite_model_maker', tflite_model_maker)],
       code_url_prefix=FLAGS.code_url_prefix,
-      # Since model_maker imports from tensorflow_examples 'it'
-      # needs to use the tensorflow_examples path as the base_dir
-      # otherwise no docs are generated because they're in an 'external'
-      # module
-      base_dir=str(pathlib.Path(tensorflow_examples.__file__).parent),
       search_hints=FLAGS.search_hints,
       site_path=FLAGS.site_path,
-      callbacks=[public_api.explicit_package_contents_filter])
+      callbacks=[
+          public_api.explicit_package_contents_filter,
+          DeprecatedAPIFilter()
+      ])
 
   doc_generator.build(output_dir=FLAGS.output_dir)
 

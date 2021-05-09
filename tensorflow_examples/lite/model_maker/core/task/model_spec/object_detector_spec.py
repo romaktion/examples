@@ -14,7 +14,7 @@
 """Model specification for object detection."""
 
 import collections
-import logging
+import functools
 import os
 import tempfile
 from typing import Optional, Tuple, Dict
@@ -24,7 +24,6 @@ import tensorflow as tf
 from tensorflow_examples.lite.model_maker.core import compat
 from tensorflow_examples.lite.model_maker.core.api.api_util import mm_export
 from tensorflow_examples.lite.model_maker.core.data_util import object_detector_dataloader
-from tensorflow_examples.lite.model_maker.core.export_format import QuantizationType
 from tensorflow_examples.lite.model_maker.core.task import configs
 from tensorflow_examples.lite.model_maker.core.task.model_spec import util
 
@@ -37,7 +36,6 @@ from tensorflow_examples.lite.model_maker.third_party.efficientdet.keras import 
 from tensorflow_examples.lite.model_maker.third_party.efficientdet.keras import postprocess
 from tensorflow_examples.lite.model_maker.third_party.efficientdet.keras import train
 from tensorflow_examples.lite.model_maker.third_party.efficientdet.keras import train_lib
-
 
 # Number of calibration steps for full integer quantization. 500 steps are
 # enough to get a reasonable post-quantization result.
@@ -132,7 +130,8 @@ class EfficientDetModelSpec(object):
                use_xla: bool = False,
                profile: bool = False,
                debug: bool = False,
-               tf_random_seed: int = 111111) -> None:
+               tf_random_seed: int = 111111,
+               verbose: int = 0) -> None:
     """Initialze an instance with model paramaters.
 
     Args:
@@ -169,6 +168,7 @@ class EfficientDetModelSpec(object):
       debug: Enable debug mode.
       tf_random_seed: Fixed random seed for deterministic execution across runs
         for debugging.
+      verbose: verbosity mode for `tf.keras.callbacks.ModelCheckpoint`, 0 or 1.
     """
     self.model_name = model_name
     self.uri = uri
@@ -223,7 +223,8 @@ class EfficientDetModelSpec(object):
         strategy=strategy,
         batch_size=batch_size,
         tf_random_seed=tf_random_seed,
-        debug=debug)
+        debug=debug,
+        verbose=verbose)
     config.override(params, True)
     self.config = config
 
@@ -289,7 +290,7 @@ class EfficientDetModelSpec(object):
   def _get_metric_dict(self, evaluator: coco_metric.EvaluationMetric,
                        label_map: collections.OrderedDict) -> Dict[str, float]:
     """Gets the metric dict for evaluation."""
-    metrics = evaluator.result(log_level=logging.INFO)
+    metrics = evaluator.result(log_level=tf.compat.v1.logging.INFO)
     metric_dict = {}
     for i, name in enumerate(evaluator.metric_names):
       metric_dict[name] = metrics[i]
@@ -444,13 +445,28 @@ class EfficientDetModelSpec(object):
         signatures=export_model.__call__.get_concrete_function(input_spec))
     model.optimizer = original_optimizer
 
+  def get_default_quantization_config(
+      self, representative_data: object_detector_dataloader.DataLoader
+  ) -> configs.QuantizationConfig:
+    """Gets the default quantization configuration."""
+    # Sets `inference_output_type=None` since the output op is the custom NMS op
+    # which can't be quantized so that the tflite model output should be float.
+    # `supported_ops` contains both `TFLITE_BUILTINS_INT8` and `TFLITE_BUILTINS`
+    # due to the same reason: custom NMS op should be included as the
+    # `TFLITE_BUILTINS` op.
+    config = configs.QuantizationConfig.for_int8(
+        representative_data,
+        inference_output_type=None,
+        supported_ops=[
+            tf.lite.OpsSet.TFLITE_BUILTINS_INT8, tf.lite.OpsSet.TFLITE_BUILTINS
+        ])
+    config.experimental_new_quantizer = True
+    return config
+
   def export_tflite(
       self,
       model: tf.keras.Model,
       tflite_filepath: str,
-      quantization_type: Optional[QuantizationType] = None,
-      representative_dataset: Optional[
-          object_detector_dataloader.DataLoader] = None,
       quantization_config: Optional[configs.QuantizationConfig] = None) -> None:
     """Converts the retrained model to tflite format and saves it.
 
@@ -473,54 +489,14 @@ class EfficientDetModelSpec(object):
       model: The EfficientDetNet model used for training which doesn't have pre
         and post processing.
       tflite_filepath: File path to save tflite model.
-      quantization_type: Enum, type of post-training quantization. Accepted
-        values are `INT8`, `FP16`, `FP32`, `DYNAMIC`. `FP16` means float16
-        quantization with 2x smaller, optimized for GPU. `INT8` means full
-        integer quantization with 4x smaller, 3x+ speedup, optimized for Edge
-        TPU. 'DYNAMIC' means dynamic range quantization with	4x smaller, 2x-3x
-        speedup. `FP32` mean exporting float model without quantization. Please
-        refer to
-        https://www.tensorflow.org/lite/performance/post_training_quantization
-        for more detailed about different techniques for post-training
-        quantization.
-      representative_dataset: Representative dataset for full integer
-        quantization. Used when `quantization_type=INT8`.
       quantization_config: Configuration for post-training quantization.
     """
     with tempfile.TemporaryDirectory() as temp_dir:
       self.export_saved_model(
           model, temp_dir, batch_size=1, pre_mode=None, post_mode='tflite')
       converter = tf.lite.TFLiteConverter.from_saved_model(temp_dir)
-      if quantization_type == QuantizationType.INT8:
-        # Enables MLIR-based post-training quantization.
-        converter.experimental_new_quantizer = True
 
-        if representative_dataset is None:
-          raise ValueError('`representative_data` must be set when '
-                           '`quantization_type=QuantizationType.INT8.')
-
-        def representative_dataset_gen():
-          for image, _ in representative_dataset.take(_NUM_CALIBRATION_STEPS):
-            yield [image]
-
-        converter.representative_dataset = representative_dataset_gen
-        converter.optimizations = [tf.lite.Optimize.DEFAULT]
-        converter.inference_input_type = tf.uint8
-        # TFLite's custom NMS op isn't supported by post-training quant,
-        # so we add TFLITE_BUILTINS as well.
-        supported_ops = [
-            tf.lite.OpsSet.TFLITE_BUILTINS_INT8, tf.lite.OpsSet.TFLITE_BUILTINS
-        ]
-        converter.target_spec.supported_ops = supported_ops
-      elif quantization_type == QuantizationType.FP16:
-        converter.optimizations = [tf.lite.Optimize.DEFAULT]
-        converter.target_spec.supported_types = [tf.float16]
-      elif quantization_type == QuantizationType.DYNAMIC:
-        converter.optimizations = [tf.lite.Optimize.DEFAULT]
-      elif quantization_type and quantization_type != QuantizationType.FP32:
-        raise ValueError('Unsupported `quantization_type`: %s' %
-                         str(quantization_type))
-      elif quantization_config:
+      if quantization_config:
         converter = quantization_config.get_converter_with_quantization(
             converter, model_spec=self)
 
@@ -537,56 +513,62 @@ class EfficientDetModelSpec(object):
         f.write(tflite_model)
 
 
-@mm_export('object_detector.EfficientDetLite0Spec')
-def efficientdet_lite0_spec(**kwargs) -> EfficientDetModelSpec:
-  args = util.dict_with_default(
-      default_dict=dict(
-          model_name='efficientdet-lite0',
-          uri='https://tfhub.dev/tensorflow/efficientdet/lite0/feature-vector/1'
-      ),
-      **kwargs)
-  return EfficientDetModelSpec(**args)
+efficientdet_lite0_spec = functools.partial(
+    EfficientDetModelSpec,
+    model_name='efficientdet-lite0',
+    uri='https://tfhub.dev/tensorflow/efficientdet/lite0/feature-vector/1',
+)
+efficientdet_lite0_spec.__doc__ = util.wrap_doc(
+    EfficientDetModelSpec,
+    'Creates EfficientDet-Lite0 model spec. See also: `tflite_model_maker.object_detector.EfficientDetSpec`.'
+)
+mm_export('object_detector.EfficientDetLite0Spec').export_constant(
+    __name__, 'efficientdet_lite0_spec')
 
+efficientdet_lite1_spec = functools.partial(
+    EfficientDetModelSpec,
+    model_name='efficientdet-lite1',
+    uri='https://tfhub.dev/tensorflow/efficientdet/lite1/feature-vector/1',
+)
+efficientdet_lite1_spec.__doc__ = util.wrap_doc(
+    EfficientDetModelSpec,
+    'Creates EfficientDet-Lite1 model spec. See also: `tflite_model_maker.object_detector.EfficientDetSpec`.'
+)
+mm_export('object_detector.EfficientDetLite1Spec').export_constant(
+    __name__, 'efficientdet_lite1_spec')
 
-@mm_export('object_detector.EfficientDetLite1Spec')
-def efficientdet_lite1_spec(**kwargs) -> EfficientDetModelSpec:
-  args = util.dict_with_default(
-      default_dict=dict(
-          model_name='efficientdet-lite1',
-          uri='https://tfhub.dev/tensorflow/efficientdet/lite1/feature-vector/1'
-      ),
-      **kwargs)
-  return EfficientDetModelSpec(**args)
+efficientdet_lite2_spec = functools.partial(
+    EfficientDetModelSpec,
+    model_name='efficientdet-lite2',
+    uri='https://tfhub.dev/tensorflow/efficientdet/lite2/feature-vector/1',
+)
+efficientdet_lite2_spec.__doc__ = util.wrap_doc(
+    EfficientDetModelSpec,
+    'Creates EfficientDet-Lite2 model spec. See also: `tflite_model_maker.object_detector.EfficientDetSpec`.'
+)
+mm_export('object_detector.EfficientDetLite2Spec').export_constant(
+    __name__, 'efficientdet_lite2_spec')
 
+efficientdet_lite3_spec = functools.partial(
+    EfficientDetModelSpec,
+    model_name='efficientdet-lite3',
+    uri='https://tfhub.dev/tensorflow/efficientdet/lite3/feature-vector/1',
+)
+efficientdet_lite3_spec.__doc__ = util.wrap_doc(
+    EfficientDetModelSpec,
+    'Creates EfficientDet-Lite3 model spec. See also: `tflite_model_maker.object_detector.EfficientDetSpec`.'
+)
+mm_export('object_detector.EfficientDetLite3Spec').export_constant(
+    __name__, 'efficientdet_lite3_spec')
 
-@mm_export('object_detector.EfficientDetLite2Spec')
-def efficientdet_lite2_spec(**kwargs) -> EfficientDetModelSpec:
-  args = util.dict_with_default(
-      default_dict=dict(
-          model_name='efficientdet-lite2',
-          uri='https://tfhub.dev/tensorflow/efficientdet/lite2/feature-vector/1'
-      ),
-      **kwargs)
-  return EfficientDetModelSpec(**args)
-
-
-@mm_export('object_detector.EfficientDetLite3Spec')
-def efficientdet_lite3_spec(**kwargs) -> EfficientDetModelSpec:
-  args = util.dict_with_default(
-      default_dict=dict(
-          model_name='efficientdet-lite3',
-          uri='https://tfhub.dev/tensorflow/efficientdet/lite3/feature-vector/1'
-      ),
-      **kwargs)
-  return EfficientDetModelSpec(**args)
-
-
-@mm_export('object_detector.EfficientDetLite4Spec')
-def efficientdet_lite4_spec(**kwargs) -> EfficientDetModelSpec:
-  args = util.dict_with_default(
-      default_dict=dict(
-          model_name='efficientdet-lite4',
-          uri='https://tfhub.dev/tensorflow/efficientdet/lite4/feature-vector/1'
-      ),
-      **kwargs)
-  return EfficientDetModelSpec(**args)
+efficientdet_lite4_spec = functools.partial(
+    EfficientDetModelSpec,
+    model_name='efficientdet-lite4',
+    uri='https://tfhub.dev/tensorflow/efficientdet/lite4/feature-vector/2',
+)
+efficientdet_lite4_spec.__doc__ = util.wrap_doc(
+    EfficientDetModelSpec,
+    'Creates EfficientDet-Lite4 model spec. See also: `tflite_model_maker.object_detector.EfficientDetSpec`.'
+)
+mm_export('object_detector.EfficientDetLite4Spec').export_constant(
+    __name__, 'efficientdet_lite4_spec')

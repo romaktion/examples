@@ -17,11 +17,14 @@ from __future__ import division
 from __future__ import print_function
 
 import os
+import unittest
 
 from absl.testing import parameterized
 import tensorflow.compat.v2 as tf
 
 from tensorflow_examples.lite.model_maker.core.task import model_spec as ms
+from tensorflow_examples.lite.model_maker.core.task.model_spec import image_spec
+from tensorflow_examples.lite.model_maker.core.task.model_spec import text_spec
 
 MODELS = (
     ms.IMAGE_CLASSIFICATION_MODELS + ms.TEXT_CLASSIFICATION_MODELS +
@@ -33,14 +36,16 @@ class ModelSpecTest(tf.test.TestCase, parameterized.TestCase):
 
   def test_get(self):
     spec = ms.get('mobilenet_v2')
-    self.assertIsInstance(spec, ms.ImageModelSpec)
+    self.assertIsInstance(spec, image_spec.ImageModelSpec)
 
     spec = ms.get('average_word_vec')
-    self.assertIsInstance(spec, ms.AverageWordVecModelSpec)
+    self.assertIsInstance(spec, text_spec.AverageWordVecModelSpec)
 
-    spec = ms.get(ms.mobilenet_v2_spec)
-    self.assertIsInstance(spec, ms.ImageModelSpec)
+    spec = ms.get(image_spec.mobilenet_v2_spec)
+    self.assertIsInstance(spec, image_spec.ImageModelSpec)
 
+  @unittest.skipIf(tf.__version__ < '2.5',
+                   'Audio Classification requires TF 2.5 or later')
   @parameterized.parameters(MODELS)
   def test_get_not_none(self, model):
     spec = ms.get(model)

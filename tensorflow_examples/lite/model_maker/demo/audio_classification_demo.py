@@ -45,21 +45,23 @@ from absl import flags
 from absl import logging
 
 import tensorflow as tf
-from tensorflow_examples.lite.model_maker.core.data_util import audio_dataloader
-from tensorflow_examples.lite.model_maker.core.task import audio_classifier
-from tensorflow_examples.lite.model_maker.core.task import model_spec
+from tflite_model_maker import audio_classifier
+from tflite_model_maker import model_spec
 
 FLAGS = flags.FLAGS
 
 
-def define_flags():
+def _define_flags():
+  """Define CLI flags and their default values."""
   flags.DEFINE_string('export_dir', None,
                       'The directory to save exported files.')
+  flags.DEFINE_string('data_dir', None, 'The directory to load dataset from.')
   flags.DEFINE_string('spec', 'audio_browser_fft',
                       'Name of the model spec to use.')
   flags.DEFINE_string(
       'dataset', 'mini_speech_command',
-      'Which dataset to use. Supports: `mini_speech_command` and `esc50`')
+      'Which dataset to use. Supports: `mini_speech_command`, '
+      '`bird` and `esc50`')
   flags.mark_flag_as_required('export_dir')
 
 
@@ -96,50 +98,94 @@ def download_esc50_dataset(**kwargs):
   return folder_path
 
 
-def run(spec, data_dir, dataset_type, export_dir, **kwargs):
+def run(spec,
+        data_dir,
+        dataset_type,
+        export_dir,
+        epochs=5,
+        batch_size=32,
+        **kwargs):
   """Runs demo."""
   spec = model_spec.get(spec)
 
   if dataset_type == 'esc50':
     # Limit to 2 categories to speed up the demo
     categories = ['dog', 'cat']
-    train_data = audio_dataloader.DataLoader.from_esc50(
+    train_data = audio_classifier.DataLoader.from_esc50(
         spec, data_dir, folds=[0, 1, 2, 3], categories=categories)
-    validation_data = audio_dataloader.DataLoader.from_esc50(
+    validation_data = audio_classifier.DataLoader.from_esc50(
         spec, data_dir, folds=[
             4,
         ], categories=categories)
-    test_data = audio_dataloader.DataLoader.from_esc50(
+    test_data = audio_classifier.DataLoader.from_esc50(
         spec, data_dir, folds=[
             5,
         ], categories=categories)
+  elif dataset_type == 'bird':
+    if isinstance(spec, audio_classifier.YamNetSpec):
+      # In some files, two consecutive bird sounds might be too far apart, so
+      # increase the window size to have a higher probability of capturing the
+      # bird sound.
+      spec = audio_classifier.YamNetSpec(
+          keep_yamnet_and_custom_heads=True,
+          frame_step=3 * audio_classifier.YamNetSpec.EXPECTED_WAVEFORM_LENGTH,
+          frame_length=6 * audio_classifier.YamNetSpec.EXPECTED_WAVEFORM_LENGTH)
+    else:
+      raise ValueError('Bird dataset can only be used with YAMNet model.')
+    batch_size = 128
+    epochs = 100
+    train_data = audio_classifier.DataLoader.from_folder(
+        spec, os.path.join(data_dir, 'train'), cache=True)
+    train_data, validation_data = train_data.split(0.8)
+    test_data = audio_classifier.DataLoader.from_folder(
+        spec, os.path.join(data_dir, 'test'), cache=True)
 
   else:
-    data = audio_dataloader.DataLoader.from_folder(spec, data_dir)
+    data = audio_classifier.DataLoader.from_folder(spec, data_dir)
     train_data, rest_data = data.split(0.8)
     validation_data, test_data = rest_data.split(0.5)
 
-  print('Training the model')
-  model = audio_classifier.create(train_data, spec, validation_data, **kwargs)
+  print('\nTraining the model')
+  model = audio_classifier.create(
+      train_data,
+      spec,
+      validation_data,
+      batch_size=batch_size,
+      epochs=epochs,
+      **kwargs)
 
-  print('Evaluating the model')
-  _, acc = model.evaluate(test_data)
-  print('Test accuracy: %f' % acc)
+  print('\nEvaluating the model')
+  model.evaluate(test_data)
 
+  print('\nConfusion matrix: ')
+  print(model.confusion_matrix(test_data))
+  print('labels: ', test_data.index_to_label)
+
+  print('\nExporing the TFLite model to {}'.format(export_dir))
   model.export(export_dir)
 
 
 def main(_):
   logging.set_verbosity(logging.INFO)
 
-  if FLAGS.dataset == 'esc50':
-    data_dir = download_esc50_dataset()
-  else:
-    data_dir = download_speech_commands_dataset()
+  export_dir = os.path.expanduser(FLAGS.export_dir)
 
-  run(FLAGS.spec, data_dir, FLAGS.dataset, export_dir=FLAGS.export_dir)
+  if not FLAGS.data_dir:
+    if FLAGS.dataset == 'esc50':
+      data_dir = download_esc50_dataset()
+    elif FLAGS.dataset == 'bird':
+      # TODO(b/186365051): Add download function once the dataset is finalized.
+      raise ValueError('`data_dir` is missing')
+    elif FLAGS.dataset == 'mini_speech_command':
+      data_dir = download_speech_commands_dataset()
+    else:
+      raise ValueError('Unsupported dataset type: ', FLAGS.dataset)
+  else:
+    data_dir = os.path.expanduser(FLAGS.data_dir)
+
+  run(FLAGS.spec, data_dir, FLAGS.dataset, export_dir=export_dir)
 
 
 if __name__ == '__main__':
-  define_flags()
+  _define_flags()
   app.run(main)

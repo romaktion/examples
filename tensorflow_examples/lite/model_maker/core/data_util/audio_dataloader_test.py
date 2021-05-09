@@ -18,6 +18,7 @@ from __future__ import print_function
 
 import csv
 import os
+import unittest
 
 import numpy as np
 from scipy.io import wavfile
@@ -72,7 +73,7 @@ class MockSpec(audio_spec.BaseSpec):
   def target_sample_rate(self):
     return 44100
 
-  def preprocess_ds(self, ds, is_training=False):
+  def preprocess_ds(self, ds, is_training=False, cache_fn=None):
     _ = is_training
 
     @tf.function
@@ -94,6 +95,9 @@ class MockSpec(audio_spec.BaseSpec):
     autotune = tf.data.AUTOTUNE
     ds = ds.filter(_ensure_length)
     ds = ds.map(_split, num_parallel_calls=autotune).unbatch()
+
+    if cache_fn:
+      ds = cache_fn(ds)
     return ds
 
 
@@ -108,6 +112,8 @@ class Base(tf.test.TestCase):
     return folder_path
 
 
+@unittest.skipIf(tf.__version__ < '2.5',
+                 'Audio Classification requires TF 2.5 or later')
 class LoadFromESC50Test(Base):
 
   def test_from_esc50(self):
@@ -204,6 +210,8 @@ class ExamplesHelperTest(Base):
          (0, 0, 1)))
 
 
+@unittest.skipIf(tf.__version__ < '2.5',
+                 'Audio Classification requires TF 2.5 or later')
 class LoadFromFolderTest(Base):
 
   def test_spec(self):
@@ -237,9 +245,14 @@ class LoadFromFolderTest(Base):
     write_sample(folder_path, 'command0', '1.8s.wav', 4410, 1.8, value=5)
     # Ignored due to wrong file extension
     write_sample(folder_path, 'command0', '1.8s.bak', 4410, 1.8, value=6)
+    # Category not in use.
+    write_sample(folder_path, 'unused_command', '2s.wav', 44410, 1, value=7)
 
     spec = MockSpec(model_dir=folder_path)
-    loader = audio_dataloader.DataLoader.from_folder(spec, folder_path)
+    loader = audio_dataloader.DataLoader.from_folder(
+        spec,
+        folder_path,
+        categories=['background', 'command0', 'command1', 'command2'])
 
     # 6 files with .wav extennsion
     self.assertEqual(len(loader), 6)
@@ -248,6 +261,11 @@ class LoadFromFolderTest(Base):
 
     # 5 valid audio snippets
     self.assertEqual(len(list(loader.gen_dataset())), 5)
+
+    spec = MockSpec(model_dir=folder_path)
+    loader = audio_dataloader.DataLoader.from_folder(
+        spec, folder_path, cache=True)
+    self.assertEqual(len(list(loader.gen_dataset())), 6)
 
 
 if __name__ == '__main__':

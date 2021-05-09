@@ -163,6 +163,7 @@ class CustomModel(abc.ABC):
       tf.compat.v1.logging.info(
           'TensorFlow Lite model exported successfully: %s' % tflite_filepath)
     else:
+      tflite_filepath = None
       with_metadata = False
 
     if ExportFormat.SAVED_MODEL in export_format:
@@ -174,7 +175,7 @@ class CustomModel(abc.ABC):
 
     if ExportFormat.TFJS in export_format:
       tfjs_output_path = os.path.join(export_dir, tfjs_folder_name)
-      self._export_tfjs(tfjs_output_path)
+      self._export_tfjs(tfjs_output_path, tflite_filepath=tflite_filepath)
 
     if ExportFormat.VOCAB in export_format:
       if with_metadata:
@@ -219,11 +220,12 @@ class CustomModel(abc.ABC):
       options: Optional `tf.saved_model.SaveOptions` object that specifies
         options for saving to SavedModel.
     """
-    if filepath is None:
-      raise ValueError(
-          "SavedModel filepath couldn't be None when exporting to SavedModel.")
-    self.model.save(filepath, overwrite, include_optimizer, save_format,
-                    signatures, options)
+    if hasattr(self.model_spec, 'create_serving_model'):
+      model = self.model_spec.create_serving_model(self.model)
+    else:
+      model = self.model
+    model_util.export_saved_model(model, filepath, overwrite, include_optimizer,
+                                  save_format, signatures, options)
 
   def _export_tflite(self, tflite_filepath, quantization_config=None):
     """Converts the retrained model to tflite format and saves it.
@@ -234,13 +236,16 @@ class CustomModel(abc.ABC):
     """
     model_util.export_tflite(self.model, tflite_filepath, quantization_config)
 
-  def _export_tfjs(self, tfjs_filepath):
+  def _export_tfjs(self, tfjs_filepath, tflite_filepath=None, **kwargs):
     """Converts the retrained model to tflite format.
 
     Args:
       tfjs_filepath: File path to save tflite model.
+      tflite_filepath: File path to existing tflite model.
+      **kwargs: Additional kwargs.
     """
-    model_util.export_tfjs(self.model, tfjs_filepath)
+    model_util.export_tfjs(
+        self.model, tfjs_filepath, tflite_filepath=tflite_filepath, **kwargs)
 
   def _keras_callbacks(self, model_dir):
     """Returns a list of default keras callbacks for `model.fit`."""

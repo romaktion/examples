@@ -97,12 +97,14 @@ class ClassificationModel(custom_model.CustomModel):
     with tf.io.gfile.GFile(label_filepath, 'w') as f:
       f.write('\n'.join(self.index_to_label))
 
-  def evaluate_tflite(self, tflite_filepath, data):
+  def evaluate_tflite(self, tflite_filepath, data, postprocess_fn=None):
     """Evaluates the tflite model.
 
     Args:
       tflite_filepath: File path to the TFLite model.
       data: Data to be evaluated.
+      postprocess_fn: Postprocessing function that will be applied to the output
+        of `lite_runner.run` before calculating the probabilities.
 
     Returns:
       The evaluation result of TFLite model - accuracy.
@@ -115,11 +117,14 @@ class ClassificationModel(custom_model.CustomModel):
     lite_runner = model_util.get_lite_runner(tflite_filepath, self.model_spec)
     for i, (feature, label) in enumerate(data_util.generate_elements(ds)):
       log_steps = 1000
-      tf.compat.v1.logging.log_every_n(tf.compat.v1.logging.INFO,
+      tf.compat.v1.logging.log_every_n(tf.compat.v1.logging.DEBUG,
                                        'Processing example: #%d\n%s', log_steps,
                                        i, feature)
 
       probabilities = lite_runner.run(feature)
+
+      if postprocess_fn:
+        probabilities = postprocess_fn(probabilities)
       predictions.append(np.argmax(probabilities))
 
       # Gets the ground-truth labels.

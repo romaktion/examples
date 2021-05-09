@@ -30,47 +30,7 @@ from tensorflow_examples.lite.model_maker.core.task import model_spec as ms
 from tensorflow_examples.lite.model_maker.core.task import model_util
 from tensorflow_examples.lite.model_maker.core.task.metadata_writers.bert.text_classifier import metadata_writer_for_bert_text_classifier as bert_metadata_writer
 from tensorflow_examples.lite.model_maker.core.task.metadata_writers.text_classifier import metadata_writer_for_text_classifier as metadata_writer
-
-
-@mm_export('text_classifier.create')
-def create(train_data,
-           model_spec='average_word_vec',
-           validation_data=None,
-           batch_size=None,
-           epochs=3,
-           shuffle=False,
-           do_train=True):
-  """Loads data and train the model for test classification.
-
-  Args:
-    train_data: Training data.
-    model_spec: Specification for the model.
-    validation_data: Validation data. If None, skips validation process.
-    batch_size: Batch size for training.
-    epochs: Number of epochs for training.
-    shuffle: Whether the data should be shuffled.
-    do_train: Whether to run training.
-
-  Returns:
-    TextClassifier
-  """
-  model_spec = ms.get(model_spec)
-  if compat.get_tf_behavior() not in model_spec.compat_tf_versions:
-    raise ValueError('Incompatible versions. Expect {}, but got {}.'.format(
-        model_spec.compat_tf_versions, compat.get_tf_behavior()))
-
-  text_classifier = TextClassifier(
-      model_spec,
-      train_data.index_to_label,
-      shuffle=shuffle)
-
-  if do_train:
-    tf.compat.v1.logging.info('Retraining the models...')
-    text_classifier.train(train_data, validation_data, epochs, batch_size)
-  else:
-    text_classifier.create_model()
-
-  return text_classifier
+from tensorflow_examples.lite.model_maker.core.task.model_spec import text_spec
 
 
 def _get_bert_model_info(model_spec, vocab_file, label_file):
@@ -157,19 +117,25 @@ class TextClassifier(classification_model.ClassificationModel):
 
   def _export_tflite(self,
                      tflite_filepath,
-                     quantization_config=None,
+                     quantization_config='default',
                      with_metadata=True,
                      export_metadata_json_file=False):
     """Converts the retrained model to tflite format and saves it.
 
     Args:
       tflite_filepath: File path to save tflite model.
-      quantization_config: Configuration for post-training quantization.
+      quantization_config: Configuration for post-training quantization. If
+        'default', sets the `quantization_config` by default according to
+        `self.model_spec`. If None, exports the float tflite model without
+        quantization.
       with_metadata: Whether the output tflite model contains metadata.
       export_metadata_json_file: Whether to export metadata in json file. If
         True, export the metadata in the same directory as tflite model.Used
         only if `with_metadata` is True.
     """
+    if quantization_config == 'default':
+      quantization_config = self.model_spec.get_default_quantization_config()
+
     # Sets batch size from None to 1 when converting to tflite.
     model_util.set_batch_size(self.model, batch_size=1)
     model_util.export_tflite(self.model, tflite_filepath, quantization_config,
@@ -187,12 +153,12 @@ class TextClassifier(classification_model.ClassificationModel):
         self._export_labels(label_filepath)
 
         export_dir = os.path.dirname(tflite_filepath)
-        if isinstance(self.model_spec, ms.BertClassifierModelSpec):
+        if isinstance(self.model_spec, text_spec.BertClassifierModelSpec):
           model_info = _get_bert_model_info(self.model_spec, vocab_filepath,
                                             label_filepath)
           populator = bert_metadata_writer.MetadataPopulatorForBertTextClassifier(
               tflite_filepath, export_dir, model_info)
-        elif isinstance(self.model_spec, ms.AverageWordVecModelSpec):
+        elif isinstance(self.model_spec, text_spec.AverageWordVecModelSpec):
           model_info = _get_model_info(self.model_spec.name)
           populator = metadata_writer.MetadataPopulatorForTextClassifier(
               tflite_filepath, export_dir, model_info, label_filepath,
@@ -203,3 +169,47 @@ class TextClassifier(classification_model.ClassificationModel):
                            '`with_metadata=False` or write metadata by '
                            'yourself.')
         populator.populate(export_metadata_json_file)
+
+  @classmethod
+  def create(cls,
+             train_data,
+             model_spec='average_word_vec',
+             validation_data=None,
+             batch_size=None,
+             epochs=3,
+             shuffle=False,
+             do_train=True):
+    """Loads data and train the model for test classification.
+
+    Args:
+      train_data: Training data.
+      model_spec: Specification for the model.
+      validation_data: Validation data. If None, skips validation process.
+      batch_size: Batch size for training.
+      epochs: Number of epochs for training.
+      shuffle: Whether the data should be shuffled.
+      do_train: Whether to run training.
+
+    Returns:
+      An instance based on TextClassifier.
+    """
+    model_spec = ms.get(model_spec)
+    if compat.get_tf_behavior() not in model_spec.compat_tf_versions:
+      raise ValueError('Incompatible versions. Expect {}, but got {}.'.format(
+          model_spec.compat_tf_versions, compat.get_tf_behavior()))
+
+    text_classifier = cls(
+        model_spec, train_data.index_to_label, shuffle=shuffle)
+
+    if do_train:
+      tf.compat.v1.logging.info('Retraining the models...')
+      text_classifier.train(train_data, validation_data, epochs, batch_size)
+    else:
+      text_classifier.create_model()
+
+    return text_classifier
+
+
+# Shortcut function.
+create = TextClassifier.create
+mm_export('text_classifier.create').export_constant(__name__, 'create')

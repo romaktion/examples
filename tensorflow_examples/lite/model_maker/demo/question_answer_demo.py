@@ -17,14 +17,15 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import os
+
 from absl import app
 from absl import flags
 from absl import logging
 
 import tensorflow.compat.v2 as tf
-from tensorflow_examples.lite.model_maker.core.data_util.text_dataloader import QuestionAnswerDataLoader
-from tensorflow_examples.lite.model_maker.core.task import model_spec
-from tensorflow_examples.lite.model_maker.core.task import question_answer
+from tflite_model_maker import model_spec
+from tflite_model_maker import question_answer
 
 FLAGS = flags.FLAGS
 
@@ -59,9 +60,9 @@ def run(train_data_path,
   spec = model_spec.get(spec)
 
   # Gets training data and validation data.
-  train_data = QuestionAnswerDataLoader.from_squad(
+  train_data = question_answer.DataLoader.from_squad(
       train_data_path, spec, is_training=True)
-  validation_data = QuestionAnswerDataLoader.from_squad(
+  validation_data = question_answer.DataLoader.from_squad(
       validation_data_path, spec, is_training=False)
 
   # Fine-tunes the model.
@@ -79,7 +80,9 @@ def main(_):
   logging.set_verbosity(logging.INFO)
 
   train_data_path, validation_data_path = download_demo_data()
-  run(train_data_path, validation_data_path, FLAGS.export_dir, spec=FLAGS.spec)
+  export_dir = os.path.expanduser(FLAGS.export_dir)
+
+  run(train_data_path, validation_data_path, export_dir, spec=FLAGS.spec)
 
 
 if __name__ == '__main__':

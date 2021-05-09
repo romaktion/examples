@@ -32,9 +32,9 @@ from tensorflow_examples.lite.model_maker.core.task import image_preprocessing
 from tensorflow_examples.lite.model_maker.core.task import model_spec as ms
 from tensorflow_examples.lite.model_maker.core.task import model_util
 from tensorflow_examples.lite.model_maker.core.task import train_image_classifier_lib
+from tensorflow_examples.lite.model_maker.core.task.model_spec import image_spec
 
 from tensorflow_hub.tools.make_image_classifier import make_image_classifier_lib as hub_lib
-from tflite_support import metadata as _metadata  # pylint: disable=g-direct-tensorflow-import
 
 
 def get_hub_lib_hparams(**kwargs):
@@ -43,101 +43,13 @@ def get_hub_lib_hparams(**kwargs):
   return train_image_classifier_lib.add_params(hparams, **kwargs)
 
 
-@mm_export('image_classifier.create')
-def create(train_data,
-           model_spec='efficientnet_lite0',
-           validation_data=None,
-           batch_size=None,
-           epochs=None,
-           train_whole_model=None,
-           dropout_rate=None,
-           learning_rate=None,
-           momentum=None,
-           shuffle=False,
-           use_augmentation=False,
-           use_hub_library=True,
-           warmup_steps=None,
-           model_dir=None,
-           do_train=True):
-  """Loads data and retrains the model based on data for image classification.
-
-  Args:
-    train_data: Training data.
-    model_spec: Specification for the model.
-    validation_data: Validation data. If None, skips validation process.
-    batch_size: Number of samples per training step. If `use_hub_library` is
-      False, it represents the base learning rate when train batch size is 256
-      and it's linear to the batch size.
-    epochs: Number of epochs for training.
-    train_whole_model: If true, the Hub module is trained together with the
-      classification layer on top. Otherwise, only train the top classification
-      layer.
-    dropout_rate: The rate for dropout.
-    learning_rate: Base learning rate when train batch size is 256. Linear to
-      the batch size.
-    momentum: a Python float forwarded to the optimizer. Only used when
-      `use_hub_library` is True.
-    shuffle: Whether the data should be shuffled.
-    use_augmentation: Use data augmentation for preprocessing.
-    use_hub_library: Use `make_image_classifier_lib` from tensorflow hub to
-      retrain the model.
-    warmup_steps: Number of warmup steps for warmup schedule on learning rate.
-      If None, the default warmup_steps is used which is the total training
-      steps in two epochs. Only used when `use_hub_library` is False.
-    model_dir: The location of the model checkpoint files. Only used when
-      `use_hub_library` is False.
-    do_train: Whether to run training.
-
-  Returns:
-    An instance of ImageClassifier class.
-  """
-  model_spec = ms.get(model_spec)
-  if compat.get_tf_behavior() not in model_spec.compat_tf_versions:
-    raise ValueError('Incompatible versions. Expect {}, but got {}.'.format(
-        model_spec.compat_tf_versions, compat.get_tf_behavior()))
-
-  if use_hub_library:
-    hparams = get_hub_lib_hparams(
-        batch_size=batch_size,
-        train_epochs=epochs,
-        do_fine_tuning=train_whole_model,
-        dropout_rate=dropout_rate,
-        learning_rate=learning_rate,
-        momentum=momentum)
-  else:
-    hparams = train_image_classifier_lib.HParams.get_hparams(
-        batch_size=batch_size,
-        train_epochs=epochs,
-        do_fine_tuning=train_whole_model,
-        dropout_rate=dropout_rate,
-        learning_rate=learning_rate,
-        warmup_steps=warmup_steps,
-        model_dir=model_dir)
-
-  image_classifier = ImageClassifier(
-      model_spec,
-      train_data.index_to_label,
-      shuffle=shuffle,
-      hparams=hparams,
-      use_augmentation=use_augmentation)
-
-  if do_train:
-    tf.compat.v1.logging.info('Retraining the models...')
-    image_classifier.train(train_data, validation_data)
-  else:
-    # Used in evaluation.
-    image_classifier.create_model(with_loss_and_metrics=True)
-
-  return image_classifier
-
-
 def _get_model_info(model_spec,
                     num_classes,
                     quantization_config=None,
                     version='v1'):
   """Gets the specific info for the image model."""
 
-  if not isinstance(model_spec, ms.ImageModelSpec):
+  if not isinstance(model_spec, image_spec.ImageModelSpec):
     raise ValueError('Currently only support models for image classification.')
 
   image_min = 0
@@ -175,7 +87,8 @@ class ImageClassifier(classification_model.ClassificationModel):
                index_to_label,
                shuffle=True,
                hparams=hub_lib.get_default_hparams(),
-               use_augmentation=False):
+               use_augmentation=False,
+               representative_data=None):
     """Init function for ImageClassifier class.
 
     Args:
@@ -188,6 +101,9 @@ class ImageClassifier(classification_model.ClassificationModel):
         .do_fine_tuning: If true, the Hub module is trained together with the
           classification layer on top.
       use_augmentation: Use data augmentation for preprocessing.
+      representative_data:  Representative dataset for full integer
+        quantization. Used when converting the keras model to the TFLite model
+        with full interger quantization.
     """
     super(ImageClassifier, self).__init__(model_spec, index_to_label, shuffle,
                                           hparams.do_fine_tuning)
@@ -200,6 +116,7 @@ class ImageClassifier(classification_model.ClassificationModel):
         self.model_spec.stddev_rgb,
         use_augmentation=use_augmentation)
     self.history = None  # Training history that returns from `keras_model.fit`.
+    self.representative_data = representative_data
 
   def _get_tflite_input_tensors(self, input_tensors):
     """Gets the input tensors for the TFLite model."""
@@ -266,19 +183,25 @@ class ImageClassifier(classification_model.ClassificationModel):
 
   def _export_tflite(self,
                      tflite_filepath,
-                     quantization_config=None,
+                     quantization_config='default',
                      with_metadata=True,
                      export_metadata_json_file=False):
     """Converts the retrained model to tflite format and saves it.
 
     Args:
       tflite_filepath: File path to save tflite model.
-      quantization_config: Configuration for post-training quantization.
+      quantization_config: Configuration for post-training quantization. If
+        'default', sets the `quantization_config` by default according to
+        `self.model_spec`. If None, exports the float tflite model without
+        quantization.
       with_metadata: Whether the output tflite model contains metadata.
       export_metadata_json_file: Whether to export metadata in json file. If
         True, export the metadata in the same directory as tflite model.Used
         only if `with_metadata` is True.
     """
+    if quantization_config == 'default':
+      quantization_config = self.model_spec.get_default_quantization_config(
+          self.representative_data)
     model_util.export_tflite(
         self.model,
         tflite_filepath,
@@ -303,13 +226,105 @@ class ImageClassifier(classification_model.ClassificationModel):
       # Validate the output model file by reading the metadata and produce
       # a json file with the metadata under the export path
       if export_metadata_json_file:
-        displayer = _metadata.MetadataDisplayer.with_model_file(tflite_filepath)
+        metadata_json = model_util.extract_tflite_metadata_json(tflite_filepath)
         export_json_file = os.path.splitext(tflite_filepath)[0] + '.json'
-
-        content = displayer.get_metadata_json()
         with open(export_json_file, 'w') as f:
-          f.write(content)
+          f.write(metadata_json)
 
   def _get_hparams_or_default(self, hparams):
     """Returns hparams if not none, otherwise uses default one."""
     return hparams if hparams else self._hparams
+
+  @classmethod
+  def create(cls,
+             train_data,
+             model_spec='efficientnet_lite0',
+             validation_data=None,
+             batch_size=None,
+             epochs=None,
+             train_whole_model=None,
+             dropout_rate=None,
+             learning_rate=None,
+             momentum=None,
+             shuffle=False,
+             use_augmentation=False,
+             use_hub_library=True,
+             warmup_steps=None,
+             model_dir=None,
+             do_train=True):
+    """Loads data and retrains the model based on data for image classification.
+
+    Args:
+      train_data: Training data.
+      model_spec: Specification for the model.
+      validation_data: Validation data. If None, skips validation process.
+      batch_size: Number of samples per training step. If `use_hub_library` is
+        False, it represents the base learning rate when train batch size is 256
+        and it's linear to the batch size.
+      epochs: Number of epochs for training.
+      train_whole_model: If true, the Hub module is trained together with the
+        classification layer on top. Otherwise, only train the top
+        classification layer.
+      dropout_rate: The rate for dropout.
+      learning_rate: Base learning rate when train batch size is 256. Linear to
+        the batch size.
+      momentum: a Python float forwarded to the optimizer. Only used when
+        `use_hub_library` is True.
+      shuffle: Whether the data should be shuffled.
+      use_augmentation: Use data augmentation for preprocessing.
+      use_hub_library: Use `make_image_classifier_lib` from tensorflow hub to
+        retrain the model.
+      warmup_steps: Number of warmup steps for warmup schedule on learning rate.
+        If None, the default warmup_steps is used which is the total training
+        steps in two epochs. Only used when `use_hub_library` is False.
+      model_dir: The location of the model checkpoint files. Only used when
+        `use_hub_library` is False.
+      do_train: Whether to run training.
+
+    Returns:
+      An instance based on ImageClassifier.
+    """
+    model_spec = ms.get(model_spec)
+    if compat.get_tf_behavior() not in model_spec.compat_tf_versions:
+      raise ValueError('Incompatible versions. Expect {}, but got {}.'.format(
+          model_spec.compat_tf_versions, compat.get_tf_behavior()))
+
+    if use_hub_library:
+      hparams = get_hub_lib_hparams(
+          batch_size=batch_size,
+          train_epochs=epochs,
+          do_fine_tuning=train_whole_model,
+          dropout_rate=dropout_rate,
+          learning_rate=learning_rate,
+          momentum=momentum)
+    else:
+      hparams = train_image_classifier_lib.HParams.get_hparams(
+          batch_size=batch_size,
+          train_epochs=epochs,
+          do_fine_tuning=train_whole_model,
+          dropout_rate=dropout_rate,
+          learning_rate=learning_rate,
+          warmup_steps=warmup_steps,
+          model_dir=model_dir)
+
+    image_classifier = cls(
+        model_spec,
+        train_data.index_to_label,
+        shuffle=shuffle,
+        hparams=hparams,
+        use_augmentation=use_augmentation,
+        representative_data=train_data)
+
+    if do_train:
+      tf.compat.v1.logging.info('Retraining the models...')
+      image_classifier.train(train_data, validation_data)
+    else:
+      # Used in evaluation.
+      image_classifier.create_model(with_loss_and_metrics=True)
+
+    return image_classifier
+
+
+# Shortcut function.
+create = ImageClassifier.create
+mm_export('image_classifier.create').export_constant(__name__, 'create')
